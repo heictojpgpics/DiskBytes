@@ -638,3 +638,21 @@ Stage Summary:
 - refactor/platform-split @ 5e7be38 pushed; CI validating on real windows/macos runners now
 - The xcheck harness lives at /home/z/my-project/xcheck (untracked, reusable for every future platform-seam change)
 - Next: CI verify → merge PR #1 → Wave 2 remaining items (commands/ oversized modules, state.rs) → per-repo learning cycles (disktree/dua-cli/WinMemoryCleaner/cleaner, 20 todos each) → mass platform test expansion
+
+---
+Task ID: 28
+Agent: main (Super Z)
+Task: SESSION 9 (cont.) — PR #1 merged, learning-cycle implementations, Wave 5 start
+
+Work Log:
+- CI GREEN on 96c08ce (all 10 jobs: static gates, NSIS bundle, core+platform suites on windows/macos-latest/macos-14, benchmarks) → PR #1 squash-merged as 3b2c5ee; main now carries the platform split
+- REPO CYCLES COMPLETE: all 4 deep-reads redone post-crash (disktree, dua-cli, WinMemoryCleaner, cleaner) — 80 findings triaged into docs/LEARNINGS-BACKLOG.md (implemented / roadmap / rejected-with-reason / hygiene policies)
+- IMPLEMENTED from learnings: mac error ladder 5f5937e (EINTR retry, EACCES→list-only attrs, ENOTSUP-class→std fallback with du-parity sizing; 4 tests incl. chmod-0444 E2E); quickwins catalog invariants 418aa91 (never-clean roots, no bare env roots, single components, known ids, cache-leaf-only browsers, VM review-only, cap; saturating size fold); lint-rationale on the last 3 undocumented allows 1ea56ae
+- WAVE 5 START: the win record walk was inline in list_dir (zero parser tests vs mac's 12) — extracted walk_records (pure, identical semantics incl. partial-entries-on-violation; dropped the too_many_lines allow) + 12-test record-contract suite with a REAL-syscall E2E (d168cec)
+- Terminal-corruption mystery solved: '#ust_use]' sightings were the renderer eating '[m' as ANSI-reset — byte-count ground truth proved all files clean
+- Terminal-escape lesson + cwd-reset lesson both now handled (git -C everywhere)
+
+Stage Summary:
+- main @ d168cec: split + mac ladder + invariants + win record suite — all locally gated (xcheck 0/0 both targets, core 188/188, clippy, fmt), CI running
+- Test inventory: 188 core + ~4,700 property cases + 13 real-FS platform + 16 mac app + 13 win app (1 layout + 12 new record-walk)
+- Next: core platform test expansion (hardlinks, sparse, NFC/NFD, churn, 5000 siblings), CI verify, benchmarks wave
