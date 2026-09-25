@@ -63,7 +63,7 @@ impl ComApartment {
     ///
     /// # Errors
     /// Never on macOS (see the signature note above).
-    #[allow(clippy::unnecessary_wraps)]
+    #[allow(dead_code, clippy::unnecessary_wraps)] // the only caller is Windows-gated
     pub fn init() -> Result<Self, String> {
         Ok(ComApartment)
     }
