@@ -2,6 +2,10 @@
 //! getattrlist constants. Verbatim move from the old mac.rs.
 #![allow(clippy::upper_case_acronyms)]
 
+//! Hand-declared FFI surface: libc/ Mach structs, extern blocks,
+//! getattrlist constants. Verbatim move from the old mac.rs.
+#![allow(clippy::upper_case_acronyms)]
+
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Timeval {

@@ -7,7 +7,6 @@ use super::*;
 /// The macOS host. Registered in Tauri managed state exactly like
 /// `WindowsPlatform` (the `HostPlatform` alias resolves it).
 #[derive(Debug, Clone, Copy, Default)]
-
 pub struct MacPlatform;
 
 const BUFFER_SIZE: usize = 256 * 1024;

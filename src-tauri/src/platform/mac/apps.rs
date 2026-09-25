@@ -8,7 +8,6 @@ use super::*;
 /// values). Field names mirror win.rs exactly — the command layer is
 /// platform-generic.
 #[derive(Debug, Clone, Default)]
-
 pub struct RawRegistryApp {
     /// Bundle identifier — the stable id (win.rs `id`).
     pub id: String,

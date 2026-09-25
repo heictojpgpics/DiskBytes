@@ -145,13 +145,6 @@ pub fn relaunch_elevated_with(scan_target: &str, extra_args: &str) -> Result<(),
     }
 }
 
-// ---------------------------------------------------------------------------
-// Turbo engine volume seam (spec §5; doc 02 §4): FSCTL geometry + raw
-// $MFT staging + SeBackupPrivilege. Pure parsing lives in core::turbo.
-// ---------------------------------------------------------------------------
-/// NTFS volume geometry as the turbo engine needs it (core::turbo::Geometry
-/// mirror + volume serial).
-#[derive(Debug, Clone, Copy)]
 pub fn cluster_size(path: &str) -> u32 {
     use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceW;
     let root = root_of_display(path).unwrap_or_else(|| "C:\\".to_string());

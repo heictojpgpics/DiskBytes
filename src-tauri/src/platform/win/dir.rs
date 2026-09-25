@@ -20,7 +20,7 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::IO::IO_STATUS_BLOCK;
 
 use super::*;
-use super::{DirEntryData, DirListing, KnownFolder, ListError, Platform};
+use crate::platform::{DirEntryData, DirListing, KnownFolder, ListError, Platform};
 
 const BUFFER_WORDS: usize = 256 * 1024 / std::mem::size_of::<u64>();
 

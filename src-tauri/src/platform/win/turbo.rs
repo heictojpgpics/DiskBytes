@@ -19,6 +19,13 @@ use super::*;
 const ERROR_NOT_ALL_ASSIGNED: windows::Win32::Foundation::WIN32_ERROR =
     windows::Win32::Foundation::WIN32_ERROR(1300);
 
+// ---------------------------------------------------------------------------
+// Turbo engine volume seam (spec §5; doc 02 §4): FSCTL geometry + raw
+// $MFT staging + SeBackupPrivilege. Pure parsing lives in core::turbo.
+// ---------------------------------------------------------------------------
+/// NTFS volume geometry as the turbo engine needs it (core::turbo::Geometry
+/// mirror + volume serial).
+#[derive(Debug, Clone, Copy)]
 pub struct TurboGeometry {
     pub bytes_per_sector: u32,
     pub bytes_per_cluster: u32,
