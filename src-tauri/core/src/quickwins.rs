@@ -717,7 +717,7 @@ mod tests {
 
     /// The browser-cache pattern table must match per-PROFILE cache
     /// dirs: LocalAppData/Google/Chrome/<profile>/Cache. Pins the
-    /// static-table rewrite of the old runtime-split + Box::leak loop.
+    /// static-table rewrite of the old runtime-split + `Box::leak` loop.
     #[test]
     fn browser_cache_patterns_match_profile_caches() {
         let mut t = Tree::new(1);
