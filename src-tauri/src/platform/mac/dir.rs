@@ -53,7 +53,7 @@ impl Platform for MacPlatform {
         }
         let out = LIST_BUFFER.with(|b| {
             let mut guard = b.borrow_mut();
-            list_dir_fd(fd, guard.as_mut_slice())
+            list_dir_fd(fd, path, guard.as_mut_slice())
         });
         // SAFETY: close the fd we opened on THIS thread.
         unsafe { libc_close(fd) };
@@ -113,29 +113,121 @@ fn errno_list_error() -> ListError {
     }
 }
 
-/// The core `getattrlistbulk` loop over one directory fd.
-fn list_dir_fd(fd: c_int, buffer: &mut [u8]) -> DirListing {
+// errno values the degrade ladder keys on (<sys/errno.h>, macOS).
+const EPERM_ERR: i32 = 1;
+const EINTR_ERR: i32 = 4;
+const EACCES_ERR: i32 = 13;
+const ENODEV_ERR: i32 = 19;
+const EINVAL_ERR: i32 = 22;
+const ENOTTY_ERR: i32 = 25;
+const ENOTSUP_ERR: i32 = 45;
+const ENOSYS_ERR: i32 = 78;
+const EOPNOTSUPP_ERR: i32 = 102;
+
+/// The full attribute request (Mac BuildPrompt §4; layout per dua-cli).
+fn full_attrlist() -> AttrList {
+    AttrList {
+        bitmapcount: 5,
+        reserved: 0,
+        commonattr: ATTR_CMN_RETURNED_ATTRS
+            | ATTR_CMN_ERROR
+            | ATTR_CMN_NAME
+            | ATTR_CMN_OBJTYPE
+            | ATTR_CMN_CRTIME
+            | ATTR_CMN_MODTIME,
+        volattr: 0,
+        dirattr: 0,
+        fileattr: ATTR_FILE_TOTALSIZE | ATTR_FILE_ALLOCSIZE,
+        forkattr: 0,
+    }
+}
+
+/// The list-only request: what the kernel authorizes with read-but-not-
+/// search permission — names, types, per-record errors, nothing else
+/// (dua-cli's EACCES degradation, crates/dua-lib/src/macos/attributes.rs).
+/// `parse_bulk_record` gates every field on the RETURNED bitmap, so the
+/// same decoder handles the reduced records: sizes/times fall to 0.
+fn list_only_attrlist() -> AttrList {
+    AttrList {
+        bitmapcount: 5,
+        reserved: 0,
+        commonattr: ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_ERROR | ATTR_CMN_NAME | ATTR_CMN_OBJTYPE,
+        volattr: 0,
+        dirattr: 0,
+        fileattr: 0,
+        forkattr: 0,
+    }
+}
+
+/// `std::fs::read_dir` + `symlink_metadata` per entry — the fallback for
+/// volumes where `getattrlistbulk` is unsupported (SMB, FAT/exFAT, some
+/// network mounts). Sizes keep du-parity semantics: `st_blocks × 512`
+/// for on-disk, `len()` for logical; symlinks never followed.
+pub(crate) fn std_read_dir_listing(path: &str) -> DirListing {
+    use std::os::unix::fs::MetadataExt;
     let mut entries: Vec<DirEntryData> = Vec::new();
-    loop {
-        // REQUEST: RETURNED_ATTRS must be set — the kernel then prefixes
-        // every record with the attribute_set_t bitmap actually returned,
-        // which is what `parse_bulk_record` gates each field on. ERROR
-        // leads the common block; name, type and times follow, then the
-        // file sizes (Mac BuildPrompt §4; layout per dua-cli).
-        let attrs = AttrList {
-            bitmapcount: 5,
-            reserved: 0,
-            commonattr: ATTR_CMN_RETURNED_ATTRS
-                | ATTR_CMN_ERROR
-                | ATTR_CMN_NAME
-                | ATTR_CMN_OBJTYPE
-                | ATTR_CMN_CRTIME
-                | ATTR_CMN_MODTIME,
-            volattr: 0,
-            dirattr: 0,
-            fileattr: ATTR_FILE_TOTALSIZE | ATTR_FILE_ALLOCSIZE,
-            forkattr: 0,
+    let rd = match std::fs::read_dir(path) {
+        Ok(rd) => rd,
+        Err(e) => {
+            return DirListing {
+                entries,
+                error: Some(match e.kind() {
+                    std::io::ErrorKind::PermissionDenied => ListError::AccessDenied,
+                    std::io::ErrorKind::NotFound => ListError::Vanished,
+                    _ => ListError::Other(format!("read_dir fallback: {e}")),
+                }),
+            }
+        }
+    };
+    for e in rd.flatten() {
+        let m = std::fs::symlink_metadata(e.path()).ok();
+        let (is_dir, is_link, logical, on_disk, modified, created) = match &m {
+            Some(md) => {
+                let secs = |t: std::io::Result<std::time::SystemTime>| {
+                    t.ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map_or(0, |d| d.as_secs() as i64)
+                };
+                (
+                    md.is_dir(),
+                    md.file_type().is_symlink(),
+                    md.len(),
+                    md.blocks() * 512,
+                    secs(md.modified()),
+                    secs(md.created()),
+                )
+            }
+            None => (false, false, 0, 0, 0, 0),
         };
+        entries.push(DirEntryData {
+            name: e.file_name().to_string_lossy().encode_utf16().collect(),
+            is_dir,
+            logical,
+            on_disk,
+            modified,
+            created,
+            // Same never-descend marker the bulk parser stamps on VLNK.
+            reparse_tag: is_link.then_some(0xA000_0009),
+            cloud: false,
+            file_id: 0,
+        });
+    }
+    DirListing {
+        entries,
+        error: None,
+    }
+}
+
+/// The core `getattrlistbulk` loop over one directory fd, with dua-cli's
+/// error ladder: EINTR retries; EACCES degrades once to list-only
+/// attributes (names+types still enumerate without search permission);
+/// the not-supported-here family falls back to std::fs::read_dir (SMB,
+/// FAT/exFAT); anything else is a hard per-directory error.
+fn list_dir_fd(fd: c_int, path: &str, buffer: &mut [u8]) -> DirListing {
+    let mut entries: Vec<DirEntryData> = Vec::new();
+    let mut attrs = full_attrlist();
+    let mut list_only = false;
+    loop {
         // SAFETY: attrs + aligned 256 KiB buffer, both valid for the call.
         let n = unsafe {
             getattrlistbulk(
@@ -147,9 +239,34 @@ fn list_dir_fd(fd: c_int, buffer: &mut [u8]) -> DirListing {
             )
         };
         if n < 0 {
+            let e = errno();
+            if e == EINTR_ERR {
+                continue; // spurious signal: retry the same call
+            }
+            if (e == EACCES_ERR || e == EPERM_ERR) && !list_only {
+                // Readable but not searchable: names+types still come
+                // through with the reduced request (dua-cli's ladder).
+                eprintln!(
+                    "[mac-engine] EACCES on full attributes (commonattr={:#010x}) — degrading to list-only",
+                    attrs.commonattr
+                );
+                attrs = list_only_attrlist();
+                list_only = true;
+                continue;
+            }
+            if matches!(
+                e,
+                EINVAL_ERR | ENOTSUP_ERR | EOPNOTSUPP_ERR | ENOSYS_ERR | ENODEV_ERR | ENOTTY_ERR
+            ) {
+                // The volume/filesystem doesn't support bulk attribute
+                // enumeration (SMB, FAT/exFAT, some network mounts).
+                eprintln!(
+                    "[mac-engine] getattrlistbulk unsupported (errno={e}) — std::fs fallback for {path}"
+                );
+                return std_read_dir_listing(path);
+            }
             eprintln!(
-                "[mac-engine] getattrlistbulk failed errno={} bitmapcount={} commonattr={:#010x} fileattr={:#010x}",
-                errno(),
+                "[mac-engine] getattrlistbulk failed errno={e} bitmapcount={} commonattr={:#010x} fileattr={:#010x}",
                 attrs.bitmapcount,
                 attrs.commonattr,
                 attrs.fileattr

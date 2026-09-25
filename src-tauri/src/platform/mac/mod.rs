@@ -59,7 +59,7 @@ mod tests {
     use diskbytes_core::platform::{KnownFolder, Platform};
 
     use super::bin_policy_for;
-    use super::dir::parse_bulk_record;
+    use super::dir::{parse_bulk_record, std_read_dir_listing};
     use super::ffi::{
         AttrList, IfAddrs, StatFs, Timeval, ATTR_CMN_CRTIME, ATTR_CMN_ERROR, ATTR_CMN_MODTIME,
         ATTR_CMN_NAME, ATTR_CMN_OBJTYPE, ATTR_CMN_RETURNED_ATTRS, ATTR_FILE_ALLOCSIZE,
@@ -232,6 +232,114 @@ mod tests {
         assert_eq!(e.logical, 0);
         assert_eq!(e.on_disk, 0);
         assert_eq!(e.modified, 1);
+    }
+
+    #[test]
+    fn bulk_record_list_only_mode_parses() {
+        // The EACCES degradation path: names + types + per-record error,
+        // NOTHING else (the request the kernel authorizes with
+        // read-but-not-search permission). Sizes and times fall to 0 —
+        // the entry still lists instead of hard-failing the directory.
+        let list_only = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_ERROR | ATTR_CMN_NAME | ATTR_CMN_OBJTYPE;
+        let rec = build_record(b"degraded.bin", VREG, list_only, 0, 9_999, 9_999);
+        let e = parse_bulk_record(&rec).expect("list-only record parses");
+        assert_eq!(e.name, "degraded.bin".encode_utf16().collect::<Vec<u16>>());
+        assert!(!e.is_dir);
+        assert_eq!(e.logical, 0, "no sizes in list-only mode");
+        assert_eq!(e.on_disk, 0, "no sizes in list-only mode");
+        assert_eq!(e.modified, 0);
+        assert_eq!(e.created, 0);
+    }
+
+    #[test]
+    fn std_fallback_listing_matches_a_staged_tree() {
+        // The not-supported-here ladder rung: std::fs::read_dir +
+        // symlink_metadata per entry (SMB/FAT/exFAT volumes). The names,
+        // directory flags, symlink markers and du-parity sizing must
+        // match what the bulk engine would report.
+        let dir = std::env::temp_dir().join(format!(
+            "db-stdfb-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::create_dir_all(dir.join("nested")).expect("stage nested");
+        std::fs::write(dir.join("data.bin"), [0u8; 8192]).expect("stage data");
+        std::os::unix::fs::symlink("data.bin", dir.join("link.bin")).expect("stage symlink");
+        let listing = std_read_dir_listing(&dir.to_string_lossy());
+        assert!(listing.error.is_none(), "{:?}", listing.error);
+        let by_name = |n: &str| {
+            listing
+                .entries
+                .iter()
+                .find(|e| e.name == n.encode_utf16().collect::<Vec<u16>>())
+        };
+        let data = by_name("data.bin").expect("data.bin listed");
+        assert!(!data.is_dir);
+        assert_eq!(data.logical, 8192);
+        assert!(data.on_disk >= 4096, "st_blocks×512: {}", data.on_disk);
+        assert!(
+            data.on_disk % 512 == 0,
+            "du-parity multiple: {}",
+            data.on_disk
+        );
+        let nested = by_name("nested").expect("nested listed");
+        assert!(nested.is_dir);
+        let link = by_name("link.bin").expect("link listed");
+        assert!(
+            link.reparse_tag.is_some(),
+            "symlinks carry the never-descend marker"
+        );
+        assert!(
+            link.logical <= "data.bin".len() as u64,
+            "symlink size is the target path length, not followed"
+        );
+    }
+
+    #[test]
+    fn eaccess_dir_degrades_to_names_not_a_hard_error() {
+        // THE EACCES LADDER, end to end: a directory with read but no
+        // search permission (mode 0o444) must still enumerate NAMES —
+        // either the kernel serves the full request (more lenient
+        // policy) or the engine degrades to list-only attributes. The
+        // user-visible contract: names present, no hard error.
+        let dir = std::env::temp_dir().join(format!(
+            "db-eacces-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::create_dir_all(&dir).expect("stage dir");
+        std::fs::write(dir.join("visible.txt"), b"name enumerable").expect("stage file");
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o444))
+            .expect("chmod 444: read without search");
+        // Restore search permission regardless of assertion outcome so
+        // the staged tree stays reapable.
+        struct Restore(std::path::PathBuf);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+        let _guard = Restore(dir.clone());
+        let listing = MacPlatform.list_dir(&dir.to_string_lossy());
+        assert!(
+            listing.error.is_none(),
+            "readable-but-not-searchable must not hard-fail: {:?}",
+            listing.error
+        );
+        let names: Vec<String> = listing
+            .entries
+            .iter()
+            .map(|e| String::from_utf16_lossy(&e.name))
+            .collect();
+        assert!(
+            names.contains(&"visible.txt".to_string()),
+            "names must enumerate in degraded mode: {names:?}"
+        );
     }
 
     #[test]
