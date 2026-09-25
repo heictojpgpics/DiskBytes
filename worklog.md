@@ -656,3 +656,23 @@ Stage Summary:
 - main @ d168cec: split + mac ladder + invariants + win record suite — all locally gated (xcheck 0/0 both targets, core 188/188, clippy, fmt), CI running
 - Test inventory: 188 core + ~4,700 property cases + 13 real-FS platform + 16 mac app + 13 win app (1 layout + 12 new record-walk)
 - Next: core platform test expansion (hardlinks, sparse, NFC/NFD, churn, 5000 siblings), CI verify, benchmarks wave
+
+---
+Task ID: 29
+Agent: main (Super Z)
+Task: SESSION 9 (cont. 2) — Wave 5 test expansion + the CI convergence loop that found real bugs
+
+Work Log:
+- WAVE 5 LANDED: 8 device-behavior tests in core platform suite (hardlinks, sparse+stat ground truth, NFC/Hangul normalization byte-exact vs read_dir, control-char names, 5000 siblings, future mtimes, churn-during-scan, empty root) — 87b4dd4; 196 core tests total
+- 12-test win record-walk suite + walk_records extraction — d168cec
+- THE CI CONVERGENCE LOOP (each round a real find):
+  - R1: build_record dropped the NUL for multiple-of-4 name lengths (the list-only test's "degraded.bin" was the first 12-char name); Windows clippy caught 4 style issues in my new tests → d734fcf
+  - R2: the new app-crate clippy gate's FIRST macOS run found: module-level unsafe_code allow missing on mac/mod.rs; mac/dir.rs bypassing the parent seam; and — via the upgraded harness — TWO REAL UBs: cf_key()/get_str() passed bare &str pointers to CFStringCreateWithCString (OOB read working only by rodata luck) → d734fcf
+  - R3: the record suite's FIRST real-Windows run: FileId at 72 not 68 (LARGE_INTEGER padding after EaSize; my hardcoded asserts wrong, the offset_of! builder right), and the header check let returned<HEADER fall through to a misleading message → tightened to offset+HEADER>returned → 3677f3c
+- XCHECK HARNESS UPGRADED: now runs cargo CLIPPY per target (check alone had hidden all lint failures) + rust-version=1.80 pinned (kills MSRV-gated false positives). Local loop now matches CI exactly.
+- NEW CI GATES: Test Matrix per-OS jobs run app-crate clippy -D warnings (the ubuntu static-gates job never compiles platform code — the app's per-OS modules had NEVER been lint-gated before today)
+
+Stage Summary:
+- main @ 3677f3c — CI validating. Test inventory: 196 core + ~4,700 property + 21 platform + 16 mac app + 13 win app
+- Real bugs fixed this session so far: 2 CFString UBs, build_record NUL, ABI offsets, header-check semantics, mac error ladder (EINTR/EACCES/ENOTSUP), + everything from tasks 26-28
+- Next: CI green verification, then benchmarks wave + final wrap
