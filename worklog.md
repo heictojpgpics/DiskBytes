@@ -676,3 +676,22 @@ Stage Summary:
 - main @ 3677f3c — CI validating. Test inventory: 196 core + ~4,700 property + 21 platform + 16 mac app + 13 win app
 - Real bugs fixed this session so far: 2 CFString UBs, build_record NUL, ABI offsets, header-check semantics, mac error ladder (EINTR/EACCES/ENOTSUP), + everything from tasks 26-28
 - Next: CI green verification, then benchmarks wave + final wrap
+
+---
+Task ID: 30
+Agent: main (Super Z)
+Task: SESSION 9 (cont. 3) — the pedantic-parity convergence; ALL 13 CI CHECKS GREEN
+
+Work Log:
+- CI convergence loop closed in 4 rounds (e961cd1 -> d55815f -> 87070ab):
+  - Round A: the app-crate clippy gate's macOS run exposed the mac platform had never faced the crate's pedantic config — full parity pass (module-level FFI posture matching win/mod.rs, map_or/is_some_and/let-else modernizations, #[must_use] + # Errors/# Panics docs, Block1 keep_alive rename, API-parity allows with reasons, .app rsplit check, &HostPlatform -> HostPlatform in commands, mac_pass wildcard -> explicit imports)
+  - Round B: three compile errors the app-only files hid locally (WindowsPlatform not Copy — derive parity; **platform vs *platform deref depths; phantom COMMIT_BATCH_SIZE from a bad dependency extraction)
+  - Round C: ComApartment::init method-level dead-code allow
+  - Round D: GREEN — all 13 checks
+- XCHECK HARNESS FINAL SHAPE: private platform mod + consumer module mirroring the commands' os:: surface + the app's EXACT [lints] (all=deny, pedantic=warn) + rust-version=1.80 + clippy per target. Local loop == CI for the platform seam. The two lints it cannot reproduce (dead_code, unused_imports for recycle_seam/com re-exports) are scoped-allowed with justification.
+
+Stage Summary:
+- main @ 87070ab: ALL GREEN — static gates, NSIS bundle, core+platform suites on windows-latest/macos-latest/macos-14, benchmarks both platforms, UI screenshots, macOS Build
+- Session 9 totals: PR #1 merged (platform split); mac error ladder; quickwins invariants; win record-walk suite + extraction; device-behavior suite; 2 CFString NUL-termination UBs; ABI offsets verified (FileId@72); header-check semantics; app-crate clippy gate on both platforms; full pedantic parity; ~60 new tests (188 core + 12 win records + 4 mac ladder)
+- Every commit pushed immediately; worklog current; LEARNINGS-BACKLOG.md preserves all 80 findings with dispositions
+- REMAINING for next session: benchmarks wave (criterion expansion), roadmap features from LEARNINGS-BACKLOG (memoized rescans, directory-id parenting, tier model), token rotation
