@@ -124,43 +124,69 @@ pub async fn commit_cleanup(
         ],
     );
 
-    // Tree surgery for every successfully recycled REAL node (path-only
-    // items like leftovers have no node to remove).
-    let removed_ids: Vec<u32> = outcome
-        .trashed
-        .iter()
-        .map(|t| tree_lookup_id(&tree, &t.path))
-        .filter(|&id| id > 0)
-        .collect();
-
-    let (new_generation, root_stats, current_folder, selected_node) = if removed_ids.is_empty() {
-        (tree.generation, Some(tree.root_stats()), 0, None)
-    } else {
-        // CoW surgery under the WRITE lock: clone only when a reader
-        // still holds an Arc (rare — caches were generation-keyed).
-        let mut guard = state.tree.write();
-        // Take the Arc out (briefly owning the tree exclusively), run
-        // surgery on a fresh Arc via Arc::get_mut — free when no reader
-        // shares it; when one does, surgery runs on a rebuilt Arc from
-        // the old snapshot's data (Tree: From<&Tree> deep copy).
-        let arc = guard.take().ok_or("tree vanished mid-commit")?;
-        drop(guard);
-        let mut owned: Tree = match Arc::try_unwrap(arc) {
-            Ok(t) => t,
-            Err(shared) => {
-                // A blocking reader (top-sizes ranking) still holds a
-                // snapshot; deep-copy once (rare, off the UI thread).
-                let snapshot: &Tree = &shared;
-                Tree::deep_from(snapshot)
-            }
-        };
+    // Path→id resolution + CoW surgery run on the blocking pool: the
+    // arena scan per trashed item is O(items × arena) and the deep copy
+    // is O(arena) — neither belongs on the async runtime thread (they
+    // would stall every other concurrent command).
+    let trashed_paths: Vec<String> = outcome.trashed.iter().map(|t| t.path.clone()).collect();
+    let tree_for_surgery = Arc::clone(&tree);
+    let surgery_result = tauri::async_runtime::spawn_blocking(move || {
+        // Tree surgery for every successfully recycled REAL node
+        // (path-only items like leftovers have no node to remove).
+        let removed_ids: Vec<u32> = trashed_paths
+            .iter()
+            .map(|p| tree_lookup_id(&tree_for_surgery, p))
+            .filter(|&id| id > 0)
+            .collect();
+        if removed_ids.is_empty() {
+            return None;
+        }
+        // CoW surgery WITHOUT the tree-vanish window: deep-copy
+        // OUTSIDE any lock; the caller swaps in under the write
+        // lock ONLY when the slot still holds our generation's
+        // tree. The old take-then-surgery-then-reinsert left the
+        // slot `None` for the whole surgery (concurrent readers
+        // spuriously errored "no scan yet", a scan finishing in the
+        // window got clobbered by the stale surgery tree, and a
+        // panic mid-surgery poisoned the slot forever). The
+        // always-copy costs one deep clone per commit — user-rare
+        // and off the UI thread; correctness wins.
+        let mut owned: Tree = Tree::deep_from(&tree_for_surgery);
         surgery::remove_subtrees(&mut owned, &removed_ids);
         let new_generation = owned.generation;
         let stats_after = owned.root_stats();
         // UI fixups: the removed navigation point walks up to a survivor.
         let current_folder = surgery::fixup_navigation(&owned, 0);
-        *state.tree.write() = Some(Arc::new(owned));
-        (new_generation, Some(stats_after), current_folder, None)
+        Some((owned, new_generation, stats_after, current_folder))
+    })
+    .await
+    .map_err(|e| format!("surgery thread failed: {e}"))?;
+
+    let (new_generation, root_stats, current_folder, selected_node) = match surgery_result {
+        None => (tree.generation, Some(tree.root_stats()), 0, None),
+        Some((owned, new_generation, stats_after, current_folder)) => {
+            // Swap under the write lock, generation-guarded: a scan that
+            // finished while we were surgering owns the slot — its fresh
+            // tree (which already reflects the recycled files on disk)
+            // wins; our surgically-modified copy is dropped.
+            {
+                let mut guard = state.tree.write();
+                let still_ours = guard.as_ref().is_some_and(|t| t.generation == generation);
+                if still_ours {
+                    *guard = Some(Arc::new(owned));
+                }
+            }
+            // ONE generation authority: `AppState.generation` must catch
+            // up to the surgery-bumped `Tree.generation` or the next
+            // start_scan's fetch_add hands out the SAME number the UI
+            // now holds (a stale in-flight request tagged N+1 would
+            // silently pass the guard against a DIFFERENT new tree) and
+            // get_status / consecutive commits mis-report.
+            state
+                .generation
+                .fetch_max(new_generation, std::sync::atomic::Ordering::SeqCst);
+            (new_generation, Some(stats_after), current_folder, None)
+        }
     };
 
     // Generation-keyed caches ALL drop (scan-swap path clears the same
@@ -210,6 +236,14 @@ fn tree_lookup_id(tree: &Tree, path: &str) -> u32 {
 
 /// Fast full-path equality without building every String: walk the
 /// parent chain comparing name slices right-to-left.
+///
+/// Unicode-correct: tree names are UTF-16 code units; the incoming
+/// path is UTF-8. The old per-`char` compare only matched BMP
+/// characters — a surrogate pair in the name (emoji, supplementary-
+/// plane CJK) never matched its UTF-8 encoding, so those files were
+/// recycled but never tree-surgically removed (stale tree until a
+/// rescan). Encoding the path to UTF-16 once and comparing units
+/// side-by-side fixes every plane.
 fn path_matches(tree: &Tree, idx: usize, path: &str) -> bool {
     // Building one String per candidate is wasteful at 1M nodes; the
     // parent-walk compare avoids it: collect ancestor name slices and
@@ -224,27 +258,27 @@ fn path_matches(tree: &Tree, idx: usize, path: &str) -> bool {
         }
         id = n.parent;
     }
-    // Compare the chain (root→leaf) joined by '\' against `path`.
+    // Compare the chain (root→leaf) joined by '\' against `path` —
+    // both sides as UTF-16 code units.
+    let path_units: Vec<u16> = path.encode_utf16().collect();
     let mut consumed = 0usize;
     for (i, (off, len)) in chain.iter().rev().enumerate() {
         if i > 0 {
-            match path.as_bytes().get(consumed) {
-                Some(b'\\') => consumed += 1,
+            match path_units.get(consumed) {
+                Some(0x5C) => consumed += 1, // '\'
                 _ => return false,
             }
         }
         let name = &tree.names[*off..off + len];
-        for &u in name {
-            let Some(c) = path[consumed..].chars().next() else {
-                return false;
-            };
-            if u32::from(c) != u32::from(u) {
-                return false;
-            }
-            consumed += c.len_utf8();
+        if path_units.len() < consumed + name.len() {
+            return false;
         }
+        if path_units[consumed..consumed + name.len()] != *name {
+            return false;
+        }
+        consumed += name.len();
     }
-    consumed == path.len()
+    consumed == path_units.len()
 }
 
 /// Open the Recycle Bin folder (the confirmation dialog's link —

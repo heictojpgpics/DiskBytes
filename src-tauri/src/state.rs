@@ -52,9 +52,16 @@ pub struct AppState {
     pub generation: AtomicU64,
     /// The running scan, if any.
     pub scan: Mutex<Option<ScanHandle>>,
-    /// True from scan start to scan end (any outcome).
-    pub scanning: AtomicBool,
-    /// The live progress snapshot (valid while `scanning`).
+    /// Generation-owned scanning flag: `0` = idle, otherwise the
+    /// generation of the running scan. A bare `AtomicBool` could not
+    /// distinguish "the scan that just exited" from "the newer scan
+    /// that superseded it": a superseded worker storing `false` killed
+    /// the NEW scan's progress ticker and made `get_status` lie for the
+    /// whole scan. Workers clear ONLY their own generation
+    /// (compare_exchange), so a superseded exit can never clobber a
+    /// successor's running state.
+    pub scanning: AtomicU64,
+    /// The live progress snapshot (valid while `scanning != 0`).
     pub progress: ProgressSink,
     /// The last completed scan's outcome (see `DoneRecord` — the
     /// lost-event reconcile path; written by the scan thread before
@@ -70,7 +77,7 @@ impl AppState {
             tree: RwLock::new(None),
             generation: AtomicU64::new(1),
             scan: Mutex::new(None),
-            scanning: AtomicBool::new(false),
+            scanning: AtomicU64::new(0),
             progress: Arc::new(Mutex::new(Progress::default())),
             last_done: Mutex::new(DoneRecord::default()),
         }
@@ -79,6 +86,26 @@ impl AppState {
     /// The current generation for request tagging.
     pub fn current_generation(&self) -> u64 {
         self.generation.load(Ordering::SeqCst)
+    }
+
+    /// Mark `generation` as the running scan (idempotent for the same
+    /// generation; never overwrites a different running generation —
+    /// callers only mark a generation they freshly allocated).
+    pub fn mark_scanning(&self, generation: u64) {
+        self.scanning.store(generation, Ordering::SeqCst);
+    }
+
+    /// True while a scan is running.
+    pub fn is_scanning(&self) -> bool {
+        self.scanning.load(Ordering::SeqCst) != 0
+    }
+
+    /// Clear the running flag ONLY when it still names `generation`
+    /// (a superseded worker's exit must not clobber a successor).
+    pub fn end_scanning(&self, generation: u64) {
+        self.scanning
+            .compare_exchange(generation, 0, Ordering::SeqCst, Ordering::SeqCst)
+            .ok();
     }
 }
 

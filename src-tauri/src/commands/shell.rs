@@ -8,6 +8,8 @@
 //! `preview_text` enforces R7.3 at the command boundary: cloud
 //! placeholders are NEVER read (no preview, no hash, no download).
 
+use std::io::Read as _;
+
 use serde::Serialize;
 use tauri::State;
 
@@ -124,9 +126,20 @@ pub fn preview_text(
     let path = tree.node_path(id);
     let name = tree.name(id);
     drop(guard);
-    let bytes = std::fs::read(&path).map_err(|e| format!("Couldn't read {name}: {e}"))?;
+    // Read AT MOST PREVIEW_CAP bytes — the old `std::fs::read` slurped
+    // the WHOLE file (a 40 GB video preview briefly doubled its size in
+    // RAM) before truncating. `take` bounds the read at the syscall
+    // level; `truncated` comes from the file's real length.
+    let file = std::fs::File::open(&path).map_err(|e| format!("Couldn't read {name}: {e}"))?;
+    let file_len = file.metadata().map_or(0, |m| m.len());
+    let mut bytes =
+        Vec::with_capacity(file_len.min(u64::try_from(PREVIEW_CAP).unwrap_or(u64::MAX)) as usize);
+    let mut capped = file.take(u64::try_from(PREVIEW_CAP).unwrap_or(u64::MAX));
+    capped
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Couldn't read {name}: {e}"))?;
     let read = bytes.len().min(PREVIEW_CAP);
-    let truncated = bytes.len() > PREVIEW_CAP;
+    let truncated = file_len > u64::try_from(PREVIEW_CAP).unwrap_or(u64::MAX);
     Ok(TextPreview {
         text: String::from_utf8_lossy(&bytes[..read]).into_owned(),
         truncated,

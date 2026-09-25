@@ -93,9 +93,20 @@ pub struct RecycleOutcome {
 pub struct CommitPlan {
     /// Effective items (shortest path first).
     pub items: Vec<StagedPath>,
-    /// `(index into items, nested-inside-index)` pairs removed by
-    /// absorption.
-    pub absorbed: Vec<(usize, usize)>,
+    /// Items removed by absorption (nested inside another staged
+    /// item): their path (for honest UI accounting — they ARE recycled
+    /// with their parent) plus the index of the absorbing root in
+    /// `items`.
+    pub absorbed: Vec<AbsorbedItem>,
+}
+
+/// One staged item absorbed by an ancestor (see [`CommitPlan`]).
+#[derive(Debug, Clone)]
+pub struct AbsorbedItem {
+    /// The absorbed (nested) item's path.
+    pub path: String,
+    /// Index into `CommitPlan::items` of the absorbing root.
+    pub absorbed_by: usize,
 }
 
 /// Pure planning pass (spec §9: "Sort paths shortest-first. Items nested
@@ -110,7 +121,7 @@ pub fn plan_commit(items: Vec<StagedPath>) -> CommitPlan {
     });
     // Absorb nested paths into their ancestor (both staged).
     let mut keep: Vec<StagedPath> = Vec::with_capacity(sorted.len());
-    let mut absorbed: Vec<(usize, usize)> = Vec::new();
+    let mut absorbed: Vec<AbsorbedItem> = Vec::new();
     for item in sorted {
         let mut absorbed_by: Option<usize> = None;
         for (i, k) in keep.iter().enumerate() {
@@ -123,7 +134,10 @@ pub fn plan_commit(items: Vec<StagedPath>) -> CommitPlan {
             }
         }
         match absorbed_by {
-            Some(i) => absorbed.push((keep.len(), i)), // index in sorted order
+            Some(i) => absorbed.push(AbsorbedItem {
+                path: item.path,
+                absorbed_by: i,
+            }),
             None => keep.push(item),
         }
     }
@@ -214,9 +228,15 @@ pub fn move_to_recycle_bin(items: Vec<StagedPath>) -> Result<RecycleOutcome, Str
     }
     // Absorbed (nested) items count as recycled with their parent: the
     // plan keeps only the absorbing root, so every nested path re-joins
-    // the trashed list marked `nested` for honest UI accounting.
-    for (absorbed_idx, _) in &plan.absorbed {
-        let _ = absorbed_idx;
+    // the trashed list marked `nested` for honest UI accounting (the
+    // frontend removes queue items by trashed path — without these
+    // entries absorbed items lingered in the queue after a commit).
+    for abs in &plan.absorbed {
+        trashed.push(TrashedItem {
+            path: abs.path.clone(),
+            already_gone: false,
+            nested: true,
+        });
     }
 
     if candidates.is_empty() {
@@ -598,6 +618,13 @@ mod tests {
         assert_eq!(plan.items.len(), 1);
         assert_eq!(plan.items[0].path, r"C:\folder");
         assert_eq!(plan.absorbed.len(), 3);
+        // The absorbed paths are preserved for UI accounting, each
+        // pointing at the absorbing root's index.
+        let paths: Vec<&str> = plan.absorbed.iter().map(|a| a.path.as_str()).collect();
+        assert!(paths.contains(&r"C:\folder\inner.txt"));
+        assert!(paths.contains(&r"C:\folder\sub"));
+        assert!(paths.contains(&r"C:\folder\sub\file.bin"));
+        assert!(plan.absorbed.iter().all(|a| a.absorbed_by == 0));
     }
 
     #[test]

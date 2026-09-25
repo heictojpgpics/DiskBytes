@@ -111,7 +111,7 @@ pub async fn start_scan(
     // Reset the progress snapshot for the new generation.
     *progress.lock() = Progress::default();
 
-    state.scanning.store(true, Ordering::SeqCst);
+    state.mark_scanning(generation);
 
     let app_handle = app.clone();
     let platform = Arc::clone(&*platform);
@@ -130,7 +130,11 @@ pub async fn start_scan(
             &cancel_for_thread,
             &progress,
         );
-        state_inner.scanning.store(false, Ordering::SeqCst);
+        // Clear ONLY our own generation: when a newer scan superseded
+        // us, the flag names ITS generation and must stay set (the old
+        // unconditional `store(false)` here killed the successor's
+        // ticker and made `get_status` report idle mid-scan).
+        state_inner.end_scanning(generation);
         // Engine telemetry (doc 07 §4) — performance watchdog, counts only.
         let an = app_handle.try_state::<crate::analytics::Analytics>();
         let denied = state_inner.progress.lock().denied;
@@ -219,26 +223,33 @@ pub async fn start_scan(
         });
     }
 
-    // The 150 ms progress ticker (spec §4). Stops when scanning ends.
+    // The 150 ms progress ticker (spec §4). Generation-owned: it exits
+    // when a NEWER scan's flag replaces ours (its own ticker owns the
+    // emissions from there) — the old flagless loop double-emitted or
+    // died early depending on which worker's exit path cleared the
+    // shared bool first.
     let ticker_app = app.clone();
-    std::thread::spawn(move || {
-        let ticker_state = ticker_app.state::<AppState>();
-        loop {
-            if !ticker_state.scanning.load(Ordering::SeqCst) {
-                return;
+    std::thread::Builder::new()
+        .name("db-ticker".into())
+        .spawn(move || {
+            let ticker_state = ticker_app.state::<AppState>();
+            loop {
+                if ticker_state.scanning.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+                let snapshot = ticker_state.progress.lock().clone();
+                let gen = ticker_state.current_generation();
+                let _ = ticker_app.emit(
+                    "scan-progress",
+                    ProgressEvent {
+                        generation: gen,
+                        progress: snapshot,
+                    },
+                );
+                std::thread::sleep(TICK_MS);
             }
-            let snapshot = ticker_state.progress.lock().clone();
-            let gen = ticker_state.current_generation();
-            let _ = ticker_app.emit(
-                "scan-progress",
-                ProgressEvent {
-                    generation: gen,
-                    progress: snapshot,
-                },
-            );
-            std::thread::sleep(TICK_MS);
-        }
-    });
+        })
+        .ok();
 
     Ok(generation)
 }
@@ -263,7 +274,7 @@ pub fn get_status(state: State<'_, AppState>) -> StatusResponse {
     let last_done = state.last_done.lock().clone();
     StatusResponse {
         generation: state.current_generation(),
-        scanning: state.scanning.load(Ordering::SeqCst),
+        scanning: state.is_scanning(),
         has_tree: state.tree.read().is_some(),
         progress: state.progress.lock().clone(),
         last_done: Some(LastDone {
@@ -292,16 +303,14 @@ pub fn cancel_scan(state: State<'_, AppState>) -> bool {
         match scan.as_ref() {
             Some(handle) => {
                 handle.cancel.store(true, Ordering::SeqCst);
+                // Clear the running flag ONLY when it still names this
+                // handle's generation (a newer scan may already own it).
+                state.end_scanning(handle.generation);
                 true
             }
             None => false,
         }
     };
-    if running {
-        // Stop the ticker now; the worker's own exit path also stores
-        // false (idempotent).
-        state.scanning.store(false, Ordering::SeqCst);
-    }
     running
 }
 
@@ -431,148 +440,180 @@ pub async fn start_scan_turbo(
             old.cancel.store(true, Ordering::SeqCst);
         }
     }
-    state.scanning.store(true, Ordering::SeqCst);
+    // Turbo scans register a ScanHandle too: without one, cancel_scan
+    // flipped a flag on a STALE handle while the MFT read ran
+    // uncancelled — the Stop button was a no-op during turbo scans.
+    let cancel: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    state.mark_scanning(generation);
     *state.progress.lock() = Progress::default();
 
     let app_handle = app.clone();
     let platform = std::sync::Arc::clone(&*platform);
-    std::thread::spawn(move || {
-        let started = std::time::Instant::now();
-        let state_inner = app_handle.state::<AppState>();
-        let mut reason: Option<String> = None;
+    let cancel_for_thread = Arc::clone(&cancel);
+    let join = std::thread::Builder::new()
+        .name("db-scan-turbo".into())
+        .spawn(move || {
+            let started = std::time::Instant::now();
+            let state_inner = app_handle.state::<AppState>();
+            let mut reason: Option<String> = None;
 
-        let mut tree_opt: Option<diskbytes_core::scan::node::Tree> = None;
-        let mut report: Option<TurboReport> = None;
+            let mut tree_opt: Option<diskbytes_core::scan::node::Tree> = None;
+            let mut report: Option<TurboReport> = None;
 
-        if !crate::platform::os::enable_backup_privilege() {
-            reason = Some("The backup privilege is unavailable on this process.".into());
-        }
-        if reason.is_none() {
-            match crate::platform::os::turbo_geometry(&drive_root) {
-                Ok((mut volume, geo)) => {
-                    match crate::platform::os::turbo_read_mft(&mut volume, &geo) {
-                        Ok(mft) => {
-                            let core_geo = diskbytes_core::turbo::Geometry {
-                                bytes_per_sector: geo.bytes_per_sector,
-                                bytes_per_cluster: geo.bytes_per_cluster,
-                                bytes_per_record: geo.bytes_per_record,
-                                mft_valid_data_length: geo.mft_valid_data_length,
-                            };
-                            let (entries, warnings) =
-                                diskbytes_core::turbo::parse_all(&mft, &core_geo);
-                            let records = entries.len() as u64;
-                            let mut build =
-                                diskbytes_core::turbo::tree::build_tree(entries, &label);
-                            diskbytes_core::scan::rollup::finalize(&mut build.tree);
-                            build.tree.generation = generation;
-                            tree_opt = Some(build.tree);
-                            report = Some(TurboReport {
-                                generation,
-                                records,
-                                torn: warnings.torn,
-                                bad: warnings.bad,
-                                unreferenced: warnings.unreferenced,
-                                ms: started.elapsed().as_millis() as u64,
-                            });
-                        }
-                        Err(e) => reason = Some(e),
-                    }
-                }
-                Err(e) => reason = Some(e),
+            if !crate::platform::os::enable_backup_privilege() {
+                reason = Some("The backup privilege is unavailable on this process.".into());
             }
-        }
+            if reason.is_none() {
+                // The MFT read itself honours the cancel flag (a user Stop
+                // during the raw read should not keep the disk busy).
+                if cancel_for_thread.load(Ordering::SeqCst) {
+                    reason = Some("cancelled".into());
+                }
+            }
+            if reason.is_none() {
+                match crate::platform::os::turbo_geometry(&drive_root) {
+                    Ok((mut volume, geo)) => {
+                        match crate::platform::os::turbo_read_mft(&mut volume, &geo) {
+                            Ok(mft) => {
+                                let core_geo = diskbytes_core::turbo::Geometry {
+                                    bytes_per_sector: geo.bytes_per_sector,
+                                    bytes_per_cluster: geo.bytes_per_cluster,
+                                    bytes_per_record: geo.bytes_per_record,
+                                    mft_valid_data_length: geo.mft_valid_data_length,
+                                };
+                                let (entries, warnings) =
+                                    diskbytes_core::turbo::parse_all(&mft, &core_geo);
+                                let records = entries.len() as u64;
+                                let mut build =
+                                    diskbytes_core::turbo::tree::build_tree(entries, &label);
+                                diskbytes_core::scan::rollup::finalize(&mut build.tree);
+                                build.tree.generation = generation;
+                                tree_opt = Some(build.tree);
+                                report = Some(TurboReport {
+                                    generation,
+                                    records,
+                                    torn: warnings.torn,
+                                    bad: warnings.bad,
+                                    unreferenced: warnings.unreferenced,
+                                    ms: started.elapsed().as_millis() as u64,
+                                });
+                            }
+                            Err(e) => reason = Some(e),
+                        }
+                    }
+                    Err(e) => reason = Some(e),
+                }
+            }
 
-        state_inner.scanning.store(false, Ordering::SeqCst);
-        match (tree_opt, reason) {
-            (Some(tree), None) => {
-                let root_stats = tree.root_stats();
-                swap_tree(&state_inner, std::sync::Arc::new(tree), generation);
-                clear_all_caches(&app_handle);
-                *state_inner.last_done.lock() = crate::state::DoneRecord {
-                    generation,
-                    stats: Some(root_stats),
-                    error: None,
-                };
-                let _ = app_handle.emit(
-                    "scan-done",
-                    ScanDone {
+            match (tree_opt, reason) {
+                (Some(tree), None) => {
+                    state_inner.end_scanning(generation);
+                    let root_stats = tree.root_stats();
+                    swap_tree(&state_inner, std::sync::Arc::new(tree), generation);
+                    clear_all_caches(&app_handle);
+                    *state_inner.last_done.lock() = crate::state::DoneRecord {
                         generation,
                         stats: Some(root_stats),
                         error: None,
-                    },
-                );
-                if let Some(r) = report {
-                    let _ = app_handle.emit("turbo-report", r);
-                }
-            }
-            (_, Some(error)) => {
-                // R2: the ONE allowed fallback — user-visible with reason.
-                let _ = app_handle.emit("turbo-fallback", &error);
-                // Fall back to the standard engine on this thread,
-                // stating the reason in the event above.
-                let outcome = diskbytes_core::scan::scanner::scan(
-                    platform,
-                    &parse_target(&drive_root),
-                    generation,
-                    &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                    &state_inner.progress,
-                );
-                state_inner.scanning.store(false, Ordering::SeqCst);
-                match outcome {
-                    ScanOutcome::Done(tree) => {
-                        let root_stats = tree.root_stats();
-                        swap_tree(&state_inner, std::sync::Arc::new(tree), generation);
-                        clear_all_caches(&app_handle);
-                        *state_inner.last_done.lock() = crate::state::DoneRecord {
+                    };
+                    let _ = app_handle.emit(
+                        "scan-done",
+                        ScanDone {
                             generation,
                             stats: Some(root_stats),
                             error: None,
-                        };
-                        let _ = app_handle.emit(
-                            "scan-done",
-                            ScanDone {
+                        },
+                    );
+                    if let Some(r) = report {
+                        let _ = app_handle.emit("turbo-report", r);
+                    }
+                }
+                (_, Some(error)) => {
+                    // R2: the ONE allowed fallback — user-visible with reason.
+                    let _ = app_handle.emit("turbo-fallback", &error);
+                    // Fall back to the standard engine on this thread,
+                    // stating the reason in the event above. The scanning
+                    // flag STAYS on our generation through the whole
+                    // fallback (the old code cleared it first — the entire
+                    // fallback ran with `scanning == false`: dead ticker,
+                    // `get_status` lying) and the REGISTERED cancel flag
+                    // flows in (the old code minted a fresh never-cancelled
+                    // flag, so Stop could not cancel a fallback either).
+                    let outcome = diskbytes_core::scan::scanner::scan(
+                        platform,
+                        &parse_target(&drive_root),
+                        generation,
+                        &cancel_for_thread,
+                        &state_inner.progress,
+                    );
+                    state_inner.end_scanning(generation);
+                    match outcome {
+                        ScanOutcome::Done(tree) => {
+                            let root_stats = tree.root_stats();
+                            swap_tree(&state_inner, std::sync::Arc::new(tree), generation);
+                            clear_all_caches(&app_handle);
+                            *state_inner.last_done.lock() = crate::state::DoneRecord {
                                 generation,
                                 stats: Some(root_stats),
                                 error: None,
-                            },
-                        );
-                    }
-                    ScanOutcome::RootFailed(r) => {
-                        *state_inner.last_done.lock() = crate::state::DoneRecord {
-                            generation,
-                            stats: None,
-                            error: Some(r.clone()),
-                        };
-                        let _ = app_handle.emit(
-                            "scan-done",
-                            ScanDone {
+                            };
+                            let _ = app_handle.emit(
+                                "scan-done",
+                                ScanDone {
+                                    generation,
+                                    stats: Some(root_stats),
+                                    error: None,
+                                },
+                            );
+                        }
+                        ScanOutcome::RootFailed(r) => {
+                            *state_inner.last_done.lock() = crate::state::DoneRecord {
                                 generation,
                                 stats: None,
-                                error: Some(r),
-                            },
-                        );
+                                error: Some(r.clone()),
+                            };
+                            let _ = app_handle.emit(
+                                "scan-done",
+                                ScanDone {
+                                    generation,
+                                    stats: None,
+                                    error: Some(r),
+                                },
+                            );
+                        }
+                        ScanOutcome::Cancelled => {}
                     }
-                    ScanOutcome::Cancelled => {}
                 }
-            }
-            (None, None) => {
-                let reason = "The turbo engine produced no tree.".to_string();
-                *state_inner.last_done.lock() = crate::state::DoneRecord {
-                    generation,
-                    stats: None,
-                    error: Some(reason.clone()),
-                };
-                let _ = app_handle.emit(
-                    "scan-done",
-                    ScanDone {
+                (None, None) => {
+                    state_inner.end_scanning(generation);
+                    let reason = "The turbo engine produced no tree.".to_string();
+                    *state_inner.last_done.lock() = crate::state::DoneRecord {
                         generation,
                         stats: None,
-                        error: Some(reason),
-                    },
-                );
+                        error: Some(reason.clone()),
+                    };
+                    let _ = app_handle.emit(
+                        "scan-done",
+                        ScanDone {
+                            generation,
+                            stats: None,
+                            error: Some(reason),
+                        },
+                    );
+                }
             }
-        }
-    });
+        })
+        .ok();
+    // Register the turbo handle so cancel_scan reaches the MFT read and
+    // the fallback (see the ScanHandle note above).
+    {
+        let mut scan = state.scan.lock();
+        *scan = Some(ScanHandle {
+            generation,
+            cancel,
+            join,
+        });
+    }
     Ok(generation)
 }
 

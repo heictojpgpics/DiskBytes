@@ -314,21 +314,34 @@ pub async fn list_applications(
     if let Some(hit) = cache.done.lock().clone() {
         return Ok((*hit).clone());
     }
-    let first = *cache.inflight.lock();
+    // Claim the enumeration slot. The FIRST caller enumerates and fills
+    // the cache; concurrent callers compute directly (correct without a
+    // wait state; the cache lands shortly). The old code had the flag
+    // INVERTED — inflight was never set, `first` was always false, and
+    // the cache-fill path was dead code: every tab switch re-enumerated
+    // the registry, MSIX, every install folder and all five app-data
+    // roots (seconds of disk I/O each time).
+    let first = {
+        let mut inflight = cache.inflight.lock();
+        let first = !*inflight;
+        *inflight = true;
+        first
+    };
     if !first {
-        // Someone else is enumerating: this request computes directly
-        // (correct without a wait state; the cache will land shortly).
+        // Someone else is enumerating.
         let platform = Arc::clone(&platform);
         return tauri::async_runtime::spawn_blocking(move || enumerate_apps(&platform))
             .await
             .map_err(|e| format!("applications thread failed: {e}"));
     }
+    // We own the enumeration: on ANY outcome (error included) the slot
+    // must be released or every later call would compute directly
+    // forever (an error must not wedge the cache path).
     let platform = Arc::clone(&platform);
-    let result = tauri::async_runtime::spawn_blocking(move || enumerate_apps(&platform))
-        .await
-        .map_err(|e| format!("applications thread failed: {e}"))?;
-    *cache.done.lock() = Some(Arc::new(result.clone()));
+    let result = tauri::async_runtime::spawn_blocking(move || enumerate_apps(&platform)).await;
     *cache.inflight.lock() = false;
+    let result = result.map_err(|e| format!("applications thread failed: {e}"))?;
+    *cache.done.lock() = Some(Arc::new(result.clone()));
     Ok(result)
 }
 
