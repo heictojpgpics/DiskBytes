@@ -147,7 +147,7 @@ unsafe impl Sync for BlockDescriptor {}
 #[repr(C)]
 pub(crate) struct Block1<F: Fn(*mut AnyObject)> {
     literal: BlockLiteral,
-    _keep: Box<F>,
+    keep_alive: Box<F>,
 }
 
 impl<F: Fn(*mut AnyObject)> Block1<F> {
@@ -161,7 +161,7 @@ impl<F: Fn(*mut AnyObject)> Block1<F> {
                 invoke: Self::trampoline,
                 descriptor: &BLOCK_DESCRIPTOR as *const BlockDescriptor as *const c_void,
             },
-            _keep: Box::new(f),
+            keep_alive: Box::new(f),
         }));
         this as *const Block1<F>
     }
@@ -172,7 +172,7 @@ impl<F: Fn(*mut AnyObject)> Block1<F> {
         let this = lit as *const Block1<F>;
         // SAFETY: the composite is immortal (leaked) and this
         // trampoline was created from that exact allocation.
-        let f = unsafe { &(*this)._keep };
+        let f = unsafe { &(*this).keep_alive };
         f(arg);
     }
 }

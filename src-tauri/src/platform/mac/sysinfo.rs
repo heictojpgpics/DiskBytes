@@ -25,6 +25,10 @@ pub struct BinPolicy {
 }
 
 /// The Trash policy for the volume containing `display_path`.
+///
+/// # Errors
+/// Never — Finder's Trash is always recyclable (the signature mirrors
+/// win.rs's registry-backed policy query).
 #[must_use]
 pub fn bin_policy_for(_display_path: &str) -> BinPolicy {
     BinPolicy {
@@ -36,13 +40,10 @@ pub fn bin_policy_for(_display_path: &str) -> BinPolicy {
 /// True when the path sits on a local volume.
 #[must_use]
 pub fn path_on_fixed_drive(display_path: &str) -> bool {
-    let c = match CString::new(display_path) {
-        Ok(c) => c,
-        Err(_) => return false,
+    let Ok(c) = CString::new(display_path) else {
+        return false;
     };
-    statfs_of(&c)
-        .map(|st| st.f_flags & 0x0000_0800 != 0 /* MNT_LOCAL */)
-        .unwrap_or(false)
+    statfs_of(&c).is_some_and(|st| st.f_flags & 0x0000_0800 != 0 /* MNT_LOCAL */)
 }
 
 /// True when the path no longer exists.
@@ -52,10 +53,17 @@ pub fn path_missing(display_path: &str) -> bool {
 }
 
 /// No COM on macOS — a no-op guard with the same API.
+#[allow(dead_code)] // API parity: the only constructor call (recycle's COM pass)
+                    // is Windows-gated; macOS uses NSWorkspace recycleURLs
 pub struct ComApartment;
 
 impl ComApartment {
-    /// Nothing to initialize on macOS.
+    /// Nothing to initialize on macOS (the Result is the win.rs signature —
+    /// the recycle layer calls it identically on both platforms).
+    ///
+    /// # Errors
+    /// Never on macOS (see the signature note above).
+    #[allow(clippy::unnecessary_wraps)]
     pub fn init() -> Result<Self, String> {
         Ok(ComApartment)
     }
@@ -68,6 +76,10 @@ pub type TrashOutcome = (String, Result<(), String>);
 /// The Trash move: `NSWorkspace.recycleURLs:completionHandler:` runs
 /// asynchronously; we pump the run loop until the handler fires
 /// (bounded wait, ≤ 60 s).
+///
+/// # Errors
+/// When the run-loop pump times out (60 s) without the completion
+/// handler firing.
 pub fn recycle_to_trash(paths: &[String]) -> Result<Vec<TrashOutcome>, String> {
     unsafe {
         let ws = workspace_shared();
@@ -78,15 +90,15 @@ pub fn recycle_to_trash(paths: &[String]) -> Result<Vec<TrashOutcome>, String> {
         let d2 = done.clone();
         let e2 = errors.clone();
         let handler = Block1::new(move |ns_error: *mut AnyObject| {
-            if !ns_error.is_null() {
+            if ns_error.is_null() {
+                e2.borrow_mut().clear();
+            } else {
                 // SAFETY: localizedDescription returns an autoreleased
                 // NSString (toll-free CFString).
                 let desc: Id = unsafe { msg_send![ns_error, localizedDescription] };
                 if let Some(s) = unsafe { cf_string_to_string(desc as *const c_void) } {
                     e2.borrow_mut().push(s);
                 }
-            } else {
-                e2.borrow_mut().clear();
             }
             d2.set(true);
         });
@@ -121,16 +133,24 @@ pub fn recycle_to_trash(paths: &[String]) -> Result<Vec<TrashOutcome>, String> {
 
 /// Volume snapshot for the sidebar ring.
 pub struct StorageSnapshot {
+    /// Volume label (last mount-from component).
     pub label: String16,
+    /// Total bytes.
     pub total: u64,
+    /// Used bytes (total − free).
     pub used: u64,
+    /// Free bytes.
     pub free: u64,
 }
 
 /// UTF-16 helper mirroring win.rs's String16.
-pub struct String16(pub Vec<u16>);
+pub struct String16(
+    /// The label's UTF-16 code units (NUL-free).
+    pub Vec<u16>,
+);
 
 /// Read the storage snapshot for the volume containing `display_path`.
+#[must_use]
 pub fn disk_storage(display_path: &str) -> Option<StorageSnapshot> {
     let c = CString::new(display_path).ok()?;
     let st = statfs_of(&c)?;
@@ -160,6 +180,9 @@ pub fn is_elevated() -> bool {
 
 /// Relaunching "as administrator" is a Windows concept; the macOS
 /// answer is Full Disk Access (the UI shows Open Privacy Settings).
+///
+/// # Errors
+/// Always — with the guidance string the UI shows.
 pub fn relaunch_elevated_with(_scan_target: &str, _extra_args: &str) -> Result<(), String> {
     Err("macOS uses Full Disk Access instead of elevation. Open System Settings → Privacy & Security → Full Disk Access and rescan.".into())
 }
@@ -171,19 +194,30 @@ pub fn relaunch_elevated_with(_scan_target: &str, _extra_args: &str) -> Result<(
 /// error before they are read.
 #[derive(Debug, Clone, Copy)]
 pub struct TurboGeometry {
+    /// Bytes per logical sector.
     pub bytes_per_sector: u32,
+    /// Bytes per filesystem cluster.
     pub bytes_per_cluster: u32,
+    /// Bytes per MFT record.
     pub bytes_per_record: u32,
+    /// Valid data length of the $MFT stream.
     pub mft_valid_data_length: u64,
 }
 
-#[allow(non_snake_case)] // names mirror the win.rs surface byte-for-byte: the command layer is
-                         // platform-generic and calls os::turbo_geometry / os::turbo_read_mft
+#[allow(non_snake_case)]
+// names mirror the win.rs surface byte-for-byte: the command layer is
+// platform-generic and calls os::turbo_geometry / os::turbo_read_mft
+///
+/// # Errors
+/// Always — the fast NTFS engine is Windows-only.
 pub fn turbo_geometry(_drive_root: &str) -> Result<(std::fs::File, TurboGeometry), String> {
     Err("The fast NTFS engine is Windows-only; the standard engine runs on macOS.".into())
 }
 
 #[allow(non_snake_case)] // see turbo_geometry: the win.rs name contract
+///
+/// # Errors
+/// Always — the fast NTFS engine is Windows-only.
 pub fn turbo_read_mft(
     _volume: &mut std::fs::File,
     _geo: &TurboGeometry,
@@ -191,6 +225,7 @@ pub fn turbo_read_mft(
     Err("The fast NTFS engine is Windows-only.".into())
 }
 
+/// No backup privilege on macOS (Full Disk Access is the grant).
 #[must_use]
 pub fn enable_backup_privilege() -> bool {
     false

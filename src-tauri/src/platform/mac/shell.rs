@@ -11,6 +11,13 @@ use super::MacPlatform;
 impl MacPlatform {
     /// Open a path with its default app (Finder for folders). The
     /// special "shell:RecycleBinFolder" sentinel opens the Trash.
+    /// (The Result is the win.rs signature — the command layer calls it
+    /// identically on both platforms; NSWorkspace openURLs has no
+    /// failure path to report here.)
+    ///
+    /// # Errors
+    /// Never on macOS (see the signature note above).
+    #[allow(clippy::unnecessary_wraps)]
     pub fn open_path(path: &str) -> Result<(), String> {
         let target = if path == "shell:RecycleBinFolder" {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
@@ -31,7 +38,11 @@ impl MacPlatform {
     }
 
     /// Reveal in Finder with selection (NSWorkspace
-    /// activateFileViewerSelectingURLs).
+    /// activateFileViewerSelectingURLs). (Result = the win.rs signature.)
+    ///
+    /// # Errors
+    /// Never on macOS (see the signature note above).
+    #[allow(clippy::unnecessary_wraps)]
     pub fn reveal_in_explorer(path: &str) -> Result<(), String> {
         unsafe {
             let ws = workspace_shared();
@@ -44,6 +55,9 @@ impl MacPlatform {
     }
 
     /// Copy text to the pasteboard (NSPasteboard generalPasteboard).
+    ///
+    /// # Errors
+    /// When NSPasteboard is missing or refuses the write.
     pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
         unsafe {
             let class = AnyClass::get("NSPasteboard").ok_or("NSPasteboard missing")?;

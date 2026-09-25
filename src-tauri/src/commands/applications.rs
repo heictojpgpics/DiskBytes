@@ -41,7 +41,7 @@ impl AppsCache {
 }
 
 /// Leftover root paths for the current user (spec §11's 5 roots).
-fn leftover_roots(platform: &HostPlatform) -> Vec<(usize, String)> {
+fn leftover_roots(platform: HostPlatform) -> Vec<(usize, String)> {
     let mut roots = Vec::new();
     if let Some(local) = platform.known_folder(KnownFolder::LocalAppData) {
         roots.push((0, local.clone()));
@@ -146,7 +146,7 @@ fn list_root(root_idx: usize, path: &str) -> RootListing {
 
 /// The full enumeration pipeline (blocking-pool body).
 #[allow(clippy::too_many_lines)] // one cohesive pipeline; splitting hurts clarity
-fn enumerate_apps(platform: &HostPlatform) -> Vec<AppEntry> {
+fn enumerate_apps(platform: HostPlatform) -> Vec<AppEntry> {
     // 1. Raw sources.
     let registry = crate::platform::os::registry_uninstall_entries();
     let msix = crate::platform::os::msix_packages().unwrap_or_default();
@@ -330,7 +330,7 @@ pub async fn list_applications(
     if !first {
         // Someone else is enumerating.
         let platform = Arc::clone(&platform);
-        return tauri::async_runtime::spawn_blocking(move || enumerate_apps(&platform))
+        return tauri::async_runtime::spawn_blocking(move || enumerate_apps(*platform))
             .await
             .map_err(|e| format!("applications thread failed: {e}"));
     }
@@ -338,7 +338,7 @@ pub async fn list_applications(
     // must be released or every later call would compute directly
     // forever (an error must not wedge the cache path).
     let platform = Arc::clone(&platform);
-    let result = tauri::async_runtime::spawn_blocking(move || enumerate_apps(&platform)).await;
+    let result = tauri::async_runtime::spawn_blocking(move || enumerate_apps(*platform)).await;
     *cache.inflight.lock() = false;
     let result = result.map_err(|e| format!("applications thread failed: {e}"))?;
     *cache.done.lock() = Some(Arc::new(result.clone()));
@@ -376,13 +376,13 @@ pub async fn uninstall_app(
 ) -> Result<UninstallResult, String> {
     let platform = Arc::clone(&platform);
     let id = id.to_string();
-    tauri::async_runtime::spawn_blocking(move || run_uninstall(&platform, &id))
+    tauri::async_runtime::spawn_blocking(move || run_uninstall(*platform, &id))
         .await
         .map_err(|e| format!("uninstall thread failed: {e}"))?
 }
 
 /// The blocking-pool body of the uninstall flow.
-fn run_uninstall(platform: &HostPlatform, id: &str) -> Result<UninstallResult, String> {
+fn run_uninstall(platform: HostPlatform, id: &str) -> Result<UninstallResult, String> {
     // Re-enumerate to find the app's current record (fresh strings —
     // the cached snapshot may predate a repair/update).
     let registry = crate::platform::os::registry_uninstall_entries();
@@ -475,7 +475,7 @@ fn run_uninstall(platform: &HostPlatform, id: &str) -> Result<UninstallResult, S
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)] // State extraction is the tauri command contract
 pub fn leftover_root_paths(platform: State<'_, Arc<HostPlatform>>) -> Vec<String> {
-    leftover_roots(platform.as_ref())
+    leftover_roots(**platform)
         .into_iter()
         .map(|(_, p)| p)
         .collect()

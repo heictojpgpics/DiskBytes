@@ -29,6 +29,18 @@
 // The macOS FFI seam is unsafe by design (same posture as win/mod.rs —
 // the crate denies unsafe_code everywhere else).
 #![allow(unsafe_code)]
+// FFI-mirror realities, same posture as win/mod.rs: the struct field
+// names mirror the published C layouts (f_bsize, ifa_next, ri_uuid…),
+// the pointer casts bridge Rust borrows to C pointers, and the integer
+// casts translate between C types (ssize_t, size_t, c_int) and Rust's.
+#![allow(clippy::struct_field_names)]
+#![allow(clippy::ptr_as_ptr)]
+#![allow(clippy::ptr_cast_constness)]
+#![allow(clippy::borrow_as_ptr)]
+#![allow(clippy::ref_as_ptr)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_sign_loss)]
 
 // ─────────────────────────────────────────────────────────────────────
 // Darwin / CoreFoundation / IOKit / Security FFI (hand-declared; the
@@ -60,6 +72,17 @@ pub use sysinfo::*;
 #[cfg(test)]
 mod tests {
     use diskbytes_core::platform::{KnownFolder, Platform};
+
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Restores 0755 on drop so a failed assert never leaves the staged
+    /// tree unreadable.
+    struct PermRestore<'a>(&'a std::path::Path);
+    impl Drop for PermRestore<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
 
     use super::bin_policy_for;
     use super::dir::{parse_bulk_record, std_read_dir_listing};
@@ -222,7 +245,7 @@ mod tests {
         let rec = build_record(b"alias", VLNK, REQ_COMMON, REQ_FILE, 7, 7);
         let e = parse_bulk_record(&rec).expect("record parses");
         assert!(e.reparse_tag.is_some(), "symlinks never descend");
-        assert!(e.name == "alias".encode_utf16().collect::<Vec<u16>>());
+        assert_eq!(e.name, "alias".encode_utf16().collect::<Vec<u16>>());
     }
 
     #[test]
@@ -321,18 +344,11 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).expect("stage dir");
         std::fs::write(dir.join("visible.txt"), b"name enumerable").expect("stage file");
-        use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o444))
             .expect("chmod 444: read without search");
         // Restore search permission regardless of assertion outcome so
         // the staged tree stays reapable.
-        struct Restore(std::path::PathBuf);
-        impl Drop for Restore {
-            fn drop(&mut self) {
-                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
-            }
-        }
-        let _guard = Restore(dir.clone());
+        let _guard = PermRestore(&dir);
         let listing = MacPlatform.list_dir(&dir.to_string_lossy());
         assert!(
             listing.error.is_none(),
@@ -422,7 +438,7 @@ mod tests {
         assert!(
             sub_names
                 .iter()
-                .any(|n| n.starts_with("emoji-") && n.ends_with(".txt")),
+                .any(|n| n.starts_with("emoji-") && n.rsplit('.').next() == Some("txt")),
             "mojibake regression (non-BMP surrogate pair): {sub_names:?}"
         );
         let beta = listing

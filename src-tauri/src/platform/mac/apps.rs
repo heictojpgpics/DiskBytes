@@ -41,16 +41,23 @@ pub struct RawRegistryApp {
 /// command layer compiles; the list is always empty.
 #[derive(Debug, Clone, Default)]
 pub struct RawMsixApp {
+    /// Package identity (always "" on macOS — no Store packages).
     pub id: String,
+    /// Display name ("" on macOS).
     pub name: String,
+    /// Publisher ("" on macOS).
     pub publisher: String,
+    /// Version ("" on macOS).
     pub version: String,
+    /// Install root ("" on macOS).
     pub install_location: String,
+    /// Package family name ("" on macOS).
     pub family_name: String,
 }
 
 /// Installed apps on macOS: every `.app` bundle under /Applications and
 /// ~/Applications (MSIX has no analogue → callers get an empty list).
+#[must_use]
 pub fn registry_uninstall_entries() -> Vec<RawRegistryApp> {
     let mut out = Vec::new();
     let roots = [
@@ -67,7 +74,7 @@ pub fn registry_uninstall_entries() -> Vec<RawRegistryApp> {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            if !name.ends_with(".app") {
+            if name.rsplit('.').next() != Some("app") {
                 continue;
             }
             let plist = path.join("Contents/Info.plist");
@@ -142,24 +149,34 @@ fn read_info_plist(
     (display, version, bundle, publisher)
 }
 
-/// MSIX has no macOS analogue.
+/// MSIX has no macOS analogue. (The Result is the win.rs signature —
+/// the applications command treats both platforms identically.)
+///
+/// # Errors
+/// Never on macOS — the list is always empty.
+#[allow(clippy::unnecessary_wraps)]
 pub fn msix_packages() -> Result<Vec<RawMsixApp>, String> {
     Ok(Vec::new())
 }
 
 /// No-op on macOS.
+///
+/// # Errors
+/// Always — Store packages are Windows-only.
 pub fn msix_remove_package(_full_name: &str) -> Result<(), String> {
     Err("Store packages are Windows-only.".into())
 }
 
 /// Last-used on macOS: Spotlight metadata in a future revision; the
 /// honest default is unknown.
+#[must_use]
 pub fn userassist_entries() -> Vec<(String, i64)> {
     Vec::new()
 }
 
 /// App icons: NSWorkspace iconForFile → PNG is a follow-up; the
 /// fallback glyph renders when unavailable (honest absence, not a fake).
+#[must_use]
 pub fn icon_png_data_url(_icon_path: &str) -> Option<String> {
     None
 }
@@ -168,7 +185,7 @@ pub fn icon_png_data_url(_icon_path: &str) -> Option<String> {
 #[must_use]
 pub fn cluster_size(path: &str) -> u32 {
     let c = CString::new(path).unwrap_or_default();
-    statfs_of(&c).map(|st| st.f_bsize).unwrap_or(0)
+    statfs_of(&c).map_or(0, |st| st.f_bsize)
 }
 
 /// Close running apps whose bundle lives under `dir`
@@ -211,6 +228,9 @@ pub fn close_processes_under(dir: &str) -> Vec<String> {
 
 /// Run an app's own uninstaller (rare on macOS — most apps are
 /// drag-to-trash). Waits for exit like the Windows path.
+///
+/// # Errors
+/// When the uninstaller path is empty or fails to launch.
 pub fn launch_and_wait_uninstaller(cmd_line: &str) -> Result<i32, String> {
     let mut parts = cmd_line.split_whitespace();
     let exe = parts.next().unwrap_or_default();

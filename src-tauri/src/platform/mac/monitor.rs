@@ -12,21 +12,37 @@ use super::ffi::{
 };
 
 /// The raw monitor sample (mirrors win.rs::RawMonitor).
+#[allow(clippy::struct_field_names)] // field names mirror win.rs exactly — the command layer is platform-generic
 pub struct RawMonitor {
+    /// CPU tick counters (`host_statistics64`).
     pub ticks: CpuTicks,
+    /// Thread count (macOS exposes the process count honestly instead).
     pub threads: u32,
+    /// Process count.
     pub processes: u32,
+    /// Physical memory total (`hw.memsize`).
     pub mem_total: u64,
+    /// Free + inactive + speculative pages × page size.
     pub mem_available: u64,
+    /// Wired pages × page size.
     pub kernel_paged: u64,
+    /// Purgeable pages × page size.
     pub kernel_nonpaged: u64,
+    /// Always 0 (no direct analogue).
     pub system_cache: u64,
+    /// mem_total − mem_available.
     pub commit_total: u64,
+    /// mem_total.
     pub commit_limit: u64,
+    /// Compressor pages × page size (Some when > 0).
     pub compressed_ws: Option<u64>,
+    /// `en*` interface octets in.
     pub net_in: u64,
+    /// `en*` interface octets out.
     pub net_out: u64,
+    /// Browsable volume samples.
     pub volumes: Vec<VolumeSample>,
+    /// (pid, name, kernel 100-ns, user 100-ns, resident bytes).
     pub procs: Vec<(u32, String, u64, u64, u64)>,
 }
 
@@ -201,6 +217,9 @@ fn process_snapshot() -> Vec<(u32, String, u64, u64, u64)> {
     out
 }
 
+///
+/// # Panics
+/// Never — the buffer is fixed-size and the bounds checked.
 fn proc_name(pid: i32) -> String {
     let mut buf = [0u8; 1024];
     // SAFETY: proc_pidpath writes a NUL-terminated path into the buffer.
@@ -213,27 +232,27 @@ fn proc_name(pid: i32) -> String {
 }
 
 /// One raw machine sample (best effort, mirrors win.rs::monitor_raw).
+///
+/// # Panics
+/// Never in practice: the CString/Mutex fallbacks cover every input;
+/// the raw FFI calls have no panic paths (documented in-body).
 #[must_use]
 pub fn monitor_raw() -> RawMonitor {
     let ticks = cpu_ticks();
     let mem_total = sysctl_u64("hw.memsize").unwrap_or(0);
     let page = sysctl_u64("vm.pagesize").unwrap_or(4096);
     let vm = vm_statistics();
-    let (mem_available, compressed) = vm
-        .map(|v| {
-            let avail = u64::from(v.free_count + v.inactive_count + v.speculative_count) * page;
-            let comp = u64::from(v.compressor_page_count) * page;
-            (avail, comp)
-        })
-        .unwrap_or((0, 0));
-    let (kernel_paged, kernel_nonpaged) = vm
-        .map(|v| {
-            (
-                u64::from(v.wire_count) * page,
-                u64::from(v.purgeable_count) * page,
-            )
-        })
-        .unwrap_or((0, 0));
+    let (mem_available, compressed) = vm.map_or((0, 0), |v| {
+        let avail = u64::from(v.free_count + v.inactive_count + v.speculative_count) * page;
+        let comp = u64::from(v.compressor_page_count) * page;
+        (avail, comp)
+    });
+    let (kernel_paged, kernel_nonpaged) = vm.map_or((0, 0), |v| {
+        (
+            u64::from(v.wire_count) * page,
+            u64::from(v.purgeable_count) * page,
+        )
+    });
     let (net_in, net_out) = network_octets();
     let volumes: Vec<VolumeSample> = volume_inventory()
         .into_iter()
@@ -242,14 +261,12 @@ pub fn monitor_raw() -> RawMonitor {
             let c = CString::new(mount.as_str())
                 .unwrap_or_else(|_| CString::new("/").expect("root is NUL-free"));
             let st = statfs_of(&c);
-            let (total, free) = st
-                .map(|s| {
-                    (
-                        s.f_blocks * u64::from(s.f_bsize),
-                        s.f_bavail * u64::from(s.f_bsize),
-                    )
-                })
-                .unwrap_or((0, 0));
+            let (total, free) = st.map_or((0, 0), |s| {
+                (
+                    s.f_blocks * u64::from(s.f_bsize),
+                    s.f_bavail * u64::from(s.f_bsize),
+                )
+            });
             VolumeSample {
                 root: mount,
                 label,

@@ -35,6 +35,7 @@ pub fn app_data_dir() -> std::path::PathBuf {
 }
 
 /// MachineGuid analogue: IOPlatformUUID (IOKit).
+#[must_use]
 pub fn machine_guid() -> Option<String> {
     unsafe {
         let name = CString::new("IOPlatformExpertDevice").ok()?;
@@ -77,12 +78,14 @@ pub fn machine_guid() -> Option<String> {
 }
 
 /// System-drive serial analogue: the root volume's fsid as u32.
+#[must_use]
 pub fn system_drive_serial() -> Option<u32> {
     let c = CString::new("/").ok()?;
     statfs_of(&c).map(|st| st.f_fsid[0])
 }
 
 /// CPU brand via sysctl.
+#[must_use]
 pub fn cpuid_brand() -> Option<String> {
     let name = CString::new("machdep.cpu.brand_string").ok()?;
     let mut buf = [0u8; 128];
@@ -154,6 +157,9 @@ fn keychain_dict(
 
 /// Encrypt-and-store (a Keychain "generic password" item; the Keychain
 /// itself provides the confidentiality DPAPI gives on Windows).
+///
+/// # Errors
+/// When the Keychain refuses the upsert (status != 0).
 pub fn dpapi_protect(data: &[u8]) -> Result<Vec<u8>, String> {
     unsafe {
         let service = cf_key(KEYCHAIN_SERVICE);
@@ -180,6 +186,9 @@ pub fn dpapi_protect(data: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 /// Fetch-and-decrypt from the Keychain.
+///
+/// # Errors
+/// When the Keychain holds no item or returns no data.
 pub fn dpapi_unprotect(data: &[u8]) -> Result<Vec<u8>, String> {
     // `data` is the caller's fallback blob; when the Keychain holds the
     // item it wins (that IS the persisted state).
@@ -218,6 +227,9 @@ pub fn dpapi_unprotect(data: &[u8]) -> Result<Vec<u8>, String> {
 
 /// POSIX stat() hardlink identity (st_dev, st_ino) — the dupes
 /// exclusion on macOS comes free from the filesystem.
+#[must_use] // parity with win.rs; on macOS the only caller (dupes) is cfg(windows)
+#[allow(dead_code)] // API-parity stub: win.rs's consumer is Windows-gated (mac hardlink
+                    // dedup is a backlog item — see docs/LEARNINGS-BACKLOG.md)
 pub fn hardlink_identity(path: &std::path::Path) -> Option<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
     let md = std::fs::metadata(path).ok()?;

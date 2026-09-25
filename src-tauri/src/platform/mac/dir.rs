@@ -37,14 +37,11 @@ impl Platform for MacPlatform {
         // A caller may pass a Windows-style verbatim marker; the mac
         // engine takes plain POSIX paths.
         let path = verbatim_dir.trim_start_matches("\\\\?\\");
-        let c_path = match CString::new(path.replace('\\', "/")) {
-            Ok(c) => c,
-            Err(_) => {
-                return DirListing {
-                    entries: Vec::new(),
-                    error: Some(ListError::Other("path contained NUL".into())),
-                }
-            }
+        let Ok(c_path) = CString::new(path.replace('\\', "/")) else {
+            return DirListing {
+                entries: Vec::new(),
+                error: Some(ListError::Other("path contained NUL".into())),
+            };
         };
         // SAFETY: open() on a NUL-terminated path; O_DIRECTORY (O_RDONLY
         // is 0, spelled out for the reader).
@@ -77,11 +74,11 @@ impl Platform for MacPlatform {
         let home = std::env::var("HOME").ok()?;
         let p = match folder {
             KnownFolder::Profile => home,
-            KnownFolder::LocalAppData => format!("{home}/Library/Application Support"),
-            KnownFolder::RoamingAppData => format!("{home}/Library/Application Support"),
+            KnownFolder::LocalAppData | KnownFolder::RoamingAppData => {
+                format!("{home}/Library/Application Support")
+            }
             KnownFolder::ProgramData => "/Library".into(),
-            KnownFolder::ProgramFiles => "/Applications".into(),
-            KnownFolder::ProgramFilesX86 => "/Applications".into(),
+            KnownFolder::ProgramFiles | KnownFolder::ProgramFilesX86 => "/Applications".into(),
             KnownFolder::ProgramFilesWindowsApps => "/System/Applications".into(),
             KnownFolder::UserPrograms => format!("{home}/Applications"),
         };
@@ -307,9 +304,9 @@ fn list_dir_fd(fd: c_int, path: &str, buffer: &mut [u8]) -> DirListing {
             let rec = &buffer[off..off + rec_len];
             if let Some(e) = parse_bulk_record(rec) {
                 // Skip "." / "..".
-                if !(e.name.len() == 1 && e.name[0] == 0x2E)
-                    && !(e.name.len() == 2 && e.name[0] == 0x2E && e.name[1] == 0x2E)
-                {
+                let is_dot = e.name.len() == 1 && e.name[0] == 0x2E;
+                let is_dotdot = e.name.len() == 2 && e.name[0] == 0x2E && e.name[1] == 0x2E;
+                if !is_dot && !is_dotdot {
                     entries.push(e);
                 }
                 parsed += 1;
