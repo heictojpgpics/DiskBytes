@@ -553,7 +553,7 @@ mod windows_pass {
 mod mac_pass {
     // Explicit imports (no `use super::*` glob): the wildcard hid what
     // the mac pass actually consumes from the parent module.
-    use super::{FailedItem, StagedPath, TrashedItem, COMMIT_BATCH_SIZE};
+    use super::{FailedItem, StagedPath, TrashedItem};
     use crate::platform::os::recycle_to_trash;
 
     /// The macOS Trash pass: NSWorkspace.recycleURLs — the same

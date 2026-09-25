@@ -214,7 +214,7 @@ pub async fn quick_wins(
     if let Some(hit) = cache.done.lock().get(&generation) {
         return Ok(Arc::clone(hit).as_ref().clone());
     }
-    let env_roots = env_roots(*platform);
+    let env_roots = env_roots(**platform);
     let rows = tauri::async_runtime::spawn_blocking(move || {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -336,7 +336,7 @@ pub fn quick_win_items(
             generation, tree.generation
         ));
     }
-    let env_roots = env_roots(*platform);
+    let env_roots = env_roots(**platform);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));

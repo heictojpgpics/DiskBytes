@@ -24,7 +24,7 @@ use crate::platform::{DirEntryData, DirListing, KnownFolder, ListError, Platform
 const BUFFER_WORDS: usize = 256 * 1024 / std::mem::size_of::<u64>();
 
 /// Windows implementation of the [`Platform`] trait.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct WindowsPlatform;
 
 impl WindowsPlatform {
