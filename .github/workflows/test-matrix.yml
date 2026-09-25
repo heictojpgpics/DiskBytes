@@ -1,0 +1,144 @@
+name: Test Matrix
+
+# Cross-platform verification (owner instruction: "use windows, mac
+# actions for platform specific testing and benchmarks, make sure we
+# support the same and effectively [on] both platforms").
+#
+# Jobs:
+# - core-tests:    the platform-independent core suite on Windows +
+#                  macOS (x64 + arm64) — every invariant test runs on
+#                  every OS.
+# - platform:      OS-specific behavior tests: real-filesystem staging
+#                  (permissions, unicode names, junction/symlink-shaped
+#                  entries, long paths), the Windows record-walk parser
+#                  and MFT fixtures, the macOS getattrlistbulk parser —
+#                  gated per-OS inside tests/platform.rs.
+# - benchmarks:    criterion suite on both OSes with results in the job
+#                  summary (perf regressions show as deltas).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: test-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  core-tests:
+    name: Core suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, macos-14]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable + clippy + rustfmt)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: "Gate: fmt"
+        run: cargo fmt --all -- --check
+        working-directory: src-tauri
+        shell: bash
+
+      - name: "Gate: clippy -D warnings (core)"
+        run: cargo clippy -p diskbytes-core --all-targets -- -D warnings
+        working-directory: src-tauri
+        shell: bash
+
+      - name: "Core tests (debug — overflow checks ON)"
+        run: cargo test -p diskbytes-core
+        working-directory: src-tauri
+        shell: bash
+
+      - name: "Core tests (release — the shipped arithmetic)"
+        run: cargo test -p diskbytes-core --release
+        working-directory: src-tauri
+        shell: bash
+
+      - name: "App crate tests (platform modules included)"
+        run: cargo test -p diskbytes --lib
+        working-directory: src-tauri
+        shell: bash
+
+      - name: "Gate: 1M-node insert < 2s (M2)"
+        run: cargo test --release -p diskbytes-core -- --ignored bench_1m --nocapture
+        working-directory: src-tauri
+        shell: bash
+
+  platform:
+    name: Platform behavior (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, macos-14]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: "Platform behavior tests (real filesystem, unicode, permissions)"
+        run: cargo test -p diskbytes-core --test platform
+        working-directory: src-tauri
+        shell: bash
+
+      - name: "App platform tests (win record-walk / mac bulk parser)"
+        run: cargo test -p diskbytes --lib platform
+        working-directory: src-tauri
+        shell: bash
+
+  benchmarks:
+    name: Benchmarks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: "Criterion suite (1M-node pipeline, layouts, surgery, quickwins, dupes)"
+        run: cargo bench -p diskbytes-core --bench suite
+        working-directory: src-tauri
+        shell: bash
+
+      - name: Upload criterion reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: criterion-${{ matrix.os }}
+          path: src-tauri/target/criterion
+          if-no-files-found: warn

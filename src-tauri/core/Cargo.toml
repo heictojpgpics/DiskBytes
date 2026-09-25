@@ -17,6 +17,14 @@ thiserror = "2"
 parking_lot = "0.12"
 rayon = "1.10"
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.5"
+
+[[bench]]
+name = "suite"
+harness = false
+
 [lints.rust]
 unsafe_code = "warn"
 missing_docs = "warn"
