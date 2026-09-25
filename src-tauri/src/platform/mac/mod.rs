@@ -280,15 +280,34 @@ mod tests {
             names.contains(&"café.txt".to_string()),
             "mojibake regression (BMP): {names:?}"
         );
+        // list_dir is ONE directory level — the CJK and non-BMP names
+        // live in sub/, so the engine is exercised a second time on
+        // that directory (the mojibake regression classes: ATTR_CMN_NAME
+        // is UTF-8; the old byte-widening mangled every non-ASCII name).
+        let sub_listing = MacPlatform.list_dir(&sub.to_string_lossy());
         assert!(
-            names.contains(&"日本語.md".to_string()),
-            "mojibake regression (CJK): {names:?}"
+            sub_listing.error.is_none(),
+            "engine error: {:?}",
+            sub_listing.error
+        );
+        let sub_names: Vec<String> = sub_listing
+            .entries
+            .iter()
+            .map(|e| String::from_utf16_lossy(&e.name))
+            .collect();
+        assert!(
+            sub_names.contains(&"gamma.log".to_string()),
+            "sub names: {sub_names:?}"
         );
         assert!(
-            names
+            sub_names.contains(&"日本語.md".to_string()),
+            "mojibake regression (CJK): {sub_names:?}"
+        );
+        assert!(
+            sub_names
                 .iter()
                 .any(|n| n.starts_with("emoji-") && n.ends_with(".txt")),
-            "mojibake regression (non-BMP surrogate pair): {names:?}"
+            "mojibake regression (non-BMP surrogate pair): {sub_names:?}"
         );
         let beta = listing
             .entries
