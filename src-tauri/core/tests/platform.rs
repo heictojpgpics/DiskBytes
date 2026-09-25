@@ -481,3 +481,243 @@ fn category_pipeline_over_real_files() {
     assert_eq!(counts.len(), 9, "every bucket represented: {counts:?}");
     assert_eq!(counts[&FileCategory::Developer.as_bits()], 2);
 }
+
+// ---------------------------------------------------------------------------
+// Wave 5: device-behavior suite — real filesystem semantics the engines
+// must be faithful to (hardlinks, sparse files, unicode normalization,
+// control characters, batch-scale siblings, future timestamps, churn
+// during enumeration).
+// ---------------------------------------------------------------------------
+
+/// Two names, one inode: the tree lists EVERY name (hardlink dedup is
+/// engine policy on Windows file-ids; the tree itself must be faithful
+/// to what the filesystem reports).
+#[test]
+fn hardlinked_files_list_under_every_name() {
+    #[cfg(unix)]
+    {
+        let dir = stage("hardlinks");
+        std::fs::write(dir.join("original.bin"), [7u8; 4096]).expect("original");
+        std::fs::hard_link(dir.join("original.bin"), dir.join("alias.bin")).expect("hardlink");
+        let t = build_from_fs(&dir);
+        let mut names: Vec<String> = (0..t.len() as u32)
+            .map(|id| String::from_utf16_lossy(t.name_u16(id)))
+            .collect();
+        names.retain(|n| n.rsplit('.').next() == Some("bin"));
+        names.sort();
+        assert_eq!(names, ["alias.bin", "original.bin"]);
+        // Both entries carry the same (real) sizes.
+        let sizes: Vec<(u64, u64)> = (0..t.len() as u32)
+            .filter(|&id| {
+                String::from_utf16_lossy(t.name_u16(id)).rsplit('.').next() == Some("bin")
+            })
+            .map(|id| {
+                let n = t.node(id).expect("node");
+                (n.logical, n.on_disk)
+            })
+            .collect();
+        assert_eq!(sizes.len(), 2);
+        assert_eq!(sizes[0], sizes[1], "same inode, same sizes");
+        assert!(sizes[0].0 == 4096, "logical is the file length");
+    }
+}
+
+/// Sparse files: `len()` (logical) can be gigabytes while the volume
+/// stores kilobytes. Through the core pipeline the two totals are
+/// SEPARATE fields: logical is byte-exact, on-disk is the engine's
+/// cluster model (the helper rounds up, mirroring the Windows
+/// `AllocationSize` contract; the macOS std-fallback test pins the
+/// `st_blocks×512` du-parity form). The OS-level sparse shape is
+/// asserted directly against `stat` where the host filesystem makes
+/// one.
+#[test]
+fn sparse_files_report_logical_and_on_disk_separately() {
+    #[cfg(unix)]
+    {
+        use std::io::{Seek, SeekFrom, Write};
+        use std::os::unix::fs::MetadataExt;
+        let dir = stage("sparse");
+        let mut f = std::fs::File::create(dir.join("huge-sparse.bin")).expect("create");
+        f.seek(SeekFrom::Start(64 * 1024 * 1024)).expect("seek");
+        f.write_all(b"x").expect("one byte");
+        drop(f);
+        let st = std::fs::metadata(dir.join("huge-sparse.bin")).expect("stat");
+        assert_eq!(
+            st.len(),
+            64 * 1024 * 1024 + 1,
+            "OS reports the full logical length"
+        );
+        if st.blocks() * 512 < st.len() {
+            // A sparse-capable filesystem (ext4/APFS on the CI runners;
+            // the dev container's overlayfs is not): the OS-level shape.
+            assert!(
+                st.blocks() * 512 < 1024 * 1024,
+                "sparse file stores megabytes, not the logical size: {}",
+                st.blocks() * 512
+            );
+        }
+        let t = build_from_fs(&dir);
+        let id = (0..t.len() as u32)
+            .find(|&id| String::from_utf16_lossy(t.name_u16(id)) == "huge-sparse.bin")
+            .expect("sparse entry");
+        let n = t.node(id).expect("node");
+        assert_eq!(n.logical, 64 * 1024 * 1024 + 1, "logical is byte-exact");
+        assert!(
+            n.on_disk >= n.logical,
+            "the helper's cluster model rounds UP (the Windows AllocationSize contract): {}",
+            n.on_disk
+        );
+    }
+}
+
+/// Unicode normalization: macOS filesystems may store a different
+/// normal form than the bytes passed to `create()`. The tree must store
+/// byte-exact WHATEVER the OS returns — pinned by comparing against
+/// `read_dir` ground truth, not the requested form.
+#[test]
+fn unicode_normalization_round_trips_byte_exact() {
+    let dir = stage("normalize");
+    // "café" in NFC (e + combining acute precomposed) and NFD variants,
+    // plus a Hangul syllable (NFC) vs its Jamo decomposition.
+    std::fs::write(dir.join("café-NFC.txt"), b"nfc").expect("nfc");
+    std::fs::write(dir.join("한글.txt"), b"hangul").expect("hangul");
+    // What the OS actually created (macOS may have decomposed it).
+    let on_disk: Vec<Vec<u16>> = std::fs::read_dir(&dir)
+        .expect("read")
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().encode_utf16().collect())
+        .collect();
+    assert_eq!(on_disk.len(), 2, "both files created");
+    let t = build_from_fs(&dir);
+    for name in &on_disk {
+        let found = (0..t.len() as u32).any(|id| t.name_u16(id) == name.as_slice());
+        assert!(
+            found,
+            "tree must store the OS-returned form byte-exact: {}",
+            String::from_utf16_lossy(name)
+        );
+    }
+}
+
+/// Names with control characters are legal on unix filesystems and
+/// must round-trip (Windows forbids them at CREATE — the test stages
+/// them only where the OS allows).
+#[test]
+fn control_character_names_round_trip() {
+    #[cfg(unix)]
+    {
+        let dir = stage("ctrl-names");
+        std::fs::write(dir.join("with\ttab.txt"), b"tab").expect("tab");
+        std::fs::write(dir.join("with\nnewline.txt"), b"newline").expect("newline");
+        let t = build_from_fs(&dir);
+        let has = |s: &str| {
+            (0..t.len() as u32)
+                .any(|id| t.name_u16(id) == s.encode_utf16().collect::<Vec<u16>>().as_slice())
+        };
+        assert!(has("with\ttab.txt"), "tab name in tree");
+        assert!(has("with\nnewline.txt"), "newline name in tree");
+    }
+}
+
+/// Batch-scale sibling counts: 5,000 entries in ONE directory exercise
+/// the append-batch path at real scale (buffer splits, allocation
+/// growth) and the rollup over a wide fan.
+#[test]
+fn five_thousand_siblings_survive_the_batch_pipeline() {
+    let dir = stage("wide");
+    for i in 0..5_000 {
+        std::fs::write(dir.join(format!("sibling-{i:05}.dat")), [0u8; 8]).expect("write");
+    }
+    let t = build_from_fs(&dir);
+    let count = (0..t.len() as u32)
+        .filter(|&id| String::from_utf16_lossy(t.name_u16(id)).starts_with("sibling-"))
+        .count();
+    assert_eq!(count, 5_000, "every sibling lands in the tree");
+}
+
+/// A file stamped in the future (clock skew, migration archives) must
+/// not break the pipeline: no panics, the tree builds with the file
+/// present, and the OS reports the future timestamp back. (Tree-node
+/// `modified` is a synthetic fixture in the std walker — the ENGINES
+/// supply real timestamps, and the win record-walk suite pins the
+/// FILETIME conversion; arbitrary i64 timestamps through the age
+/// pipeline are property-tested.)
+#[test]
+fn future_mtime_does_not_break_the_pipeline() {
+    let dir = stage("future");
+    let p = dir.join("from-the-future.txt");
+    std::fs::write(&p, b"skew").expect("write");
+    #[cfg(unix)]
+    {
+        let future = std::time::SystemTime::now()
+            .checked_add(std::time::Duration::from_secs(365 * 86_400))
+            .expect("a year out");
+        std::fs::File::options()
+            .write(true)
+            .open(&p)
+            .expect("open")
+            .set_times(std::fs::FileTimes::new().set_modified(future))
+            .expect("future mtime");
+        let m = std::fs::metadata(&p).expect("stat");
+        assert!(
+            m.modified().expect("mtime") > std::time::SystemTime::now(),
+            "the OS stores and reports future timestamps"
+        );
+    }
+    let t = build_from_fs(&dir);
+    let present = (0..t.len() as u32)
+        .any(|id| String::from_utf16_lossy(t.name_u16(id)) == "from-the-future.txt");
+    assert!(present, "the future-stamped file is scanned like any other");
+}
+
+/// Churn during enumeration: a writer thread creating and deleting
+/// files while the walk runs must never panic the walker (vanished
+/// entries are skipped; the tree builds from what survived).
+#[test]
+fn churn_during_scan_never_panics() {
+    let dir = stage("churn");
+    std::fs::write(dir.join("stable.txt"), b"stable").expect("stable");
+    let churn_root = dir.join("churning");
+    std::fs::create_dir_all(&churn_root).expect("churn dir");
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writer = {
+        let root = churn_root.clone();
+        let stop = std::sync::Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let mut i = 0u32;
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let p = root.join(format!("churn-{i:04}.tmp"));
+                let _ = std::fs::write(&p, [0u8; 64]);
+                let _ = std::fs::remove_file(&p);
+                i = i.wrapping_add(1);
+                if i > 500 {
+                    break;
+                }
+            }
+        })
+    };
+    // Two full walks while the churn runs.
+    let mut last_count = 0usize;
+    for _ in 0..2 {
+        let t = build_from_fs(&dir);
+        last_count = (0..t.len() as u32)
+            .filter(|&id| String::from_utf16_lossy(t.name_u16(id)) == "stable.txt")
+            .count();
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = writer.join();
+    assert_eq!(last_count, 1, "stable file always present; no panic");
+}
+
+/// An empty root (zero children — freshly formatted volumes, empty
+/// mounted disks) lists cleanly: no error, no phantom entries.
+#[test]
+fn empty_root_lists_cleanly() {
+    let dir = stage("empty");
+    let t = build_from_fs(&dir);
+    // Root + nothing else.
+    assert_eq!(t.len(), 1, "just the root node");
+    let root = t.node(0).expect("root");
+    assert_eq!(root.logical, 0);
+    assert_eq!(root.on_disk, 0);
+}
