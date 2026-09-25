@@ -558,7 +558,6 @@ fn bgra_to_png(bgra: &[u8], w: usize, h: usize) -> Option<String> {
     ))
 }
 
-
 /// Close processes whose images live under `dir` (spec §11: EnumWindows
 /// → WM_CLOSE → 5 s wait → TerminateProcess). Returns the image paths
 /// that were running (for the UI's "closed N processes" note).

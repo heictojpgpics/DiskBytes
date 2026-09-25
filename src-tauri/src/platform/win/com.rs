@@ -1,7 +1,5 @@
 //! COM STA apartment guard for shell/recycle calls.
 
-
-
 use super::*;
 
 /// COM apartment initialization guard (recycle thread). `CoUninitialize`

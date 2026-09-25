@@ -58,7 +58,12 @@ extern "C" {
     pub(crate) fn freeifaddrs(ifa: *mut IfAddrs);
 
     // libproc — process inventory + usage.
-    pub(crate) fn proc_listpids(kind: u32, typeinfo: u32, buffer: *mut c_void, buffersize: c_int) -> c_int;
+    pub(crate) fn proc_listpids(
+        kind: u32,
+        typeinfo: u32,
+        buffer: *mut c_void,
+        buffersize: c_int,
+    ) -> c_int;
     pub(crate) fn proc_pidpath(pid: i32, buffer: *mut c_void, buffersize: u32) -> c_int;
     pub(crate) fn proc_pid_rusage(pid: i32, flavor: c_int, buffer: *mut c_void) -> c_int;
 }
@@ -83,7 +88,8 @@ extern "C" {
 extern "C" {
     // Security.framework — Keychain (SecItem, the DPAPI analogue).
     pub(crate) fn SecItemAdd(attributes: *const c_void, result: *mut *const c_void) -> OSStatus;
-    pub(crate) fn SecItemCopyMatching(query: *const c_void, result: *mut *const c_void) -> OSStatus;
+    pub(crate) fn SecItemCopyMatching(query: *const c_void, result: *mut *const c_void)
+        -> OSStatus;
     pub(crate) fn SecItemDelete(query: *const c_void) -> OSStatus;
 
     // CoreFoundation — toll-free bridged to Foundation objects.
@@ -121,7 +127,11 @@ extern "C" {
         key_callbacks: *const c_void,
         value_callbacks: *const c_void,
     ) -> *mut c_void;
-    pub(crate) fn CFDictionaryAddValue(the_dict: *const c_void, key: *const c_void, value: *const c_void);
+    pub(crate) fn CFDictionaryAddValue(
+        the_dict: *const c_void,
+        key: *const c_void,
+        value: *const c_void,
+    );
     pub(crate) fn CFDictionaryGetValueIfPresent(
         the_dict: *const c_void,
         key: *const c_void,
@@ -135,7 +145,11 @@ extern "C" {
         format: *mut c_int,
         error: *mut *const c_void,
     ) -> *mut c_void;
-    pub(crate) fn CFDataCreate(alloc: *const c_void, bytes: *const u8, length: isize) -> *mut c_void;
+    pub(crate) fn CFDataCreate(
+        alloc: *const c_void,
+        bytes: *const u8,
+        length: isize,
+    ) -> *mut c_void;
     // AppKit constants bridged through CF.
     pub(crate) fn NSPasteboardTypeString() -> *const c_void;
     #[link_name = "kCFBooleanTrue"]
