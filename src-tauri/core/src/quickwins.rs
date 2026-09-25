@@ -46,6 +46,21 @@ pub struct Pattern {
     pub segments: &'static [&'static str],
 }
 
+/// Browser cache locations, statically spelled out: the old runtime
+/// split + `Box::leak` leaked 9 boxes on every `resolve()` call
+/// (`patterns()` builds a fresh Vec per call).
+const BROWSER_CACHE_PATTERNS: [&[&str]; 9] = [
+    &["Google", "Chrome", "*", "Cache"],
+    &["Google", "Chrome", "*", "Code Cache"],
+    &["Google", "Chrome", "*", "GPUCache"],
+    &["Microsoft", "Edge", "*", "Cache"],
+    &["Microsoft", "Edge", "*", "Code Cache"],
+    &["Microsoft", "Edge", "*", "GPUCache"],
+    &["BraveSoftware", "Brave-Browser", "*", "Cache"],
+    &["BraveSoftware", "Brave-Browser", "*", "Code Cache"],
+    &["BraveSoftware", "Brave-Browser", "*", "GPUCache"],
+];
+
 /// The full pattern table (spec §6 categories, verbatim locations).
 #[must_use]
 pub fn patterns() -> Vec<Pattern> {
@@ -90,17 +105,8 @@ pub fn patterns() -> Vec<Pattern> {
             "%LOCALAPPDATA%",
             &["Microsoft", "Windows", "WER"],
         );
-        // Browser caches (Chrome/Edge/Brave + Firefox).
-        for browser in [
-            "Google\\Chrome",
-            "Microsoft\\Edge",
-            "BraveSoftware\\Brave-Browser",
-        ] {
-            for cache in ["Cache", "Code Cache", "GPUCache"] {
-                let segs: Vec<&str> = browser.split('\\').chain(["*", cache]).collect();
-                let segs: &[&str] = Box::leak(segs.into_boxed_slice());
-                add("browser_caches", "%LOCALAPPDATA%", segs);
-            }
+        for segs in BROWSER_CACHE_PATTERNS {
+            add("browser_caches", "%LOCALAPPDATA%", segs);
         }
         add(
             "browser_caches",
@@ -147,7 +153,10 @@ pub fn build_artifact_with_sibling(name: &[u16], siblings: &[Vec<u16>]) -> bool 
         return has_ext(&["Cargo.toml", "pom.xml"]);
     }
     if eq(name, "bin") || eq(name, "obj") {
-        return has_ext(&["project.json"]) || has_ext(&["*.csproj", "*.vcxproj"]) || {
+        // `project.json` names an exact sibling; .csproj/.vcxproj need
+        // the suffix wildcard below (a sibling literally named
+        // `*.csproj` never exists — the old `has_ext` entries were dead).
+        return has_ext(&["project.json"]) || {
             // wildcard sibling check
             siblings.iter().any(|s| {
                 let s_str = String::from_utf16_lossy(s.as_slice());
@@ -173,25 +182,23 @@ pub const VM_DISK_MIN: u64 = 1024 * 1024 * 1024;
 /// Resolve every Quick Wins category against the tree (spec §6).
 ///
 /// `env_roots` maps `%LOCALAPPDATA%` etc. to absolute paths (engine
-/// resolves via known folders; also `%USERPROFILE%`).
-/// `now` feeds the large-media age-agnostic size rule.
+/// resolves via known folders; also `%USERPROFILE%`). `_now` is kept
+/// for API compatibility — large-media is age-agnostic by spec.
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn resolve(
     tree: &Tree,
     env_roots: &std::collections::HashMap<String, String>,
-    now: i64,
+    _now: i64,
 ) -> Vec<QuickWinCategory> {
     let mut out: Vec<QuickWinCategory> = Vec::new();
-    let mut used: std::collections::HashSet<u32> = std::collections::HashSet::new();
 
     let push_cat = |id: &'static str,
                     title: &'static str,
                     icon: &'static str,
                     review_only: bool,
                     extra: Option<&'static str>,
-                    items: Vec<u32>,
-                    used: &mut std::collections::HashSet<u32>|
+                    items: Vec<u32>|
      -> Option<QuickWinCategory> {
         // Drop items nested inside an already-matched item of the SAME
         // category (spec: "never counts something nested inside its own
@@ -205,9 +212,6 @@ pub fn resolve(
             if filtered.len() >= CATEGORY_CAP {
                 break;
             }
-        }
-        for &f in &filtered {
-            used.insert(f);
         }
         if filtered.is_empty() {
             return None;
@@ -262,7 +266,7 @@ pub fn resolve(
         ),
     ] {
         if let Some(items) = buckets.remove(key) {
-            if let Some(cat) = push_cat(id, title, icon, false, None, items, &mut used) {
+            if let Some(cat) = push_cat(id, title, icon, false, None, items) {
                 out.push(cat);
             }
         }
@@ -270,15 +274,7 @@ pub fn resolve(
 
     // node_modules: any depth, name match (uses `**`).
     let nm = find_named(tree, tree.root, "node_modules", true);
-    if let Some(cat) = push_cat(
-        "node_modules",
-        "node_modules",
-        "code",
-        false,
-        None,
-        nm,
-        &mut used,
-    ) {
+    if let Some(cat) = push_cat("node_modules", "node_modules", "code", false, None, nm) {
         out.push(cat);
     }
 
@@ -291,52 +287,20 @@ pub fn resolve(
         false,
         None,
         ba,
-        &mut used,
     ) {
         out.push(cat);
     }
 
     // Large media: video/audio/image ≥ 10 MB.
     let lm = find_large_media(tree, tree.root);
-    if let Some(cat) = push_cat(
-        "large_media",
-        "Large media",
-        "video",
-        false,
-        None,
-        lm,
-        &mut used,
-    ) {
+    if let Some(cat) = push_cat("large_media", "Large media", "video", false, None, lm) {
         out.push(cat);
     }
 
     // VM disks (review-only).
     let mut vm: Vec<u32> = Vec::new();
     for root in VM_DISK_ROOTS {
-        let mut segs: Vec<String> = Vec::new();
-        let mut it = root.iter();
-        if let Some(env) = it.next() {
-            if let Some(base) = env_roots.get(&(*env).to_string().replace('%', "")) {
-                segs.push(base.clone());
-            } else if let Some(base) = env_roots.get(*env) {
-                segs.push(base.clone());
-            } else {
-                continue;
-            }
-        }
-        for s in it {
-            segs.push((*s).to_string());
-        }
-        let seg_refs: Vec<&str> = segs.iter().map(String::as_str).collect();
-        let joined = if cfg!(target_os = "macos") {
-            segs.join("/")
-        } else {
-            segs.join("\\")
-        };
-        for id in match_pattern(tree, &joined, &seg_refs[1..]) {
-            let _ = id;
-        }
-        // Simpler: resolve via the first env root then match remaining segs.
+        // Resolve the env root, then match the remaining segments.
         if let Some(base) = env_roots.get(&root[0].to_string().replace('%', "")) {
             let rest: Vec<&str> = root[1..].to_vec();
             for id in match_pattern(tree, base, &rest) {
@@ -353,7 +317,7 @@ pub fn resolve(
             }
         }
     });
-    if let Some(cat) = push_cat("vm_disks", "VM disks", "server", true, None, vm, &mut used) {
+    if let Some(cat) = push_cat("vm_disks", "VM disks", "server", true, None, vm) {
         out.push(cat);
     }
 
@@ -374,12 +338,10 @@ pub fn resolve(
         true,
         Some("ms-settings:storagesense"),
         wo,
-        &mut used,
     ) {
         out.push(cat);
     }
 
-    let _ = now;
     out.sort_unstable_by_key(|c| std::cmp::Reverse(c.size));
     out
 }
@@ -751,5 +713,50 @@ mod tests {
         assert!(m.contains(&8));
         let bad = match_pattern(&t, "C:\\Does\\Not\\Exist", &["Temp"]);
         assert!(bad.is_empty());
+    }
+
+    /// The browser-cache pattern table must match per-PROFILE cache
+    /// dirs: LocalAppData/Google/Chrome/<profile>/Cache. Pins the
+    /// static-table rewrite of the old runtime-split + Box::leak loop.
+    #[test]
+    fn browser_cache_patterns_match_profile_caches() {
+        let mut t = Tree::new(1);
+        t.add_root_path(0, "C:\\Users\\z");
+        t.append_batch(0, vec![dir("AppData")]); // 1
+        t.append_batch(1, vec![dir("Local")]); // 2
+        t.append_batch(2, vec![dir("Google")]); // 3
+        t.append_batch(3, vec![dir("Chrome")]); // 4
+        t.append_batch(4, vec![dir("Profile 1"), dir("Profile 2")]); // 5, 6
+        t.append_batch(5, vec![dir("Cache"), dir("Code Cache")]); // 7, 8
+        t.append_batch(6, vec![dir("GPUCache")]); // 9
+        rollup::finalize(&mut t);
+        let m = match_pattern(
+            &t,
+            "C:\\Users\\z\\AppData\\Local",
+            &["Google", "Chrome", "*", "Cache"],
+        );
+        assert_eq!(m, vec![7], "exact 'Cache' dir under any profile");
+        let m = match_pattern(
+            &t,
+            "C:\\Users\\z\\AppData\\Local",
+            &["Google", "Chrome", "*", "Code Cache"],
+        );
+        assert_eq!(m, vec![8], "'Code Cache' (with space) matches");
+        let m = match_pattern(
+            &t,
+            "C:\\Users\\z\\AppData\\Local",
+            &["Google", "Chrome", "*", "GPUCache"],
+        );
+        assert_eq!(m, vec![9], "'GPUCache' matches");
+        // And the table itself: every entry resolves against the
+        // pattern-matching semantics (3 browsers x 3 cache kinds).
+        assert_eq!(BROWSER_CACHE_PATTERNS.len(), 9);
+        for segs in BROWSER_CACHE_PATTERNS {
+            assert_eq!(segs.len(), 4, "browser patterns are 4 segments: {segs:?}");
+            assert_eq!(
+                segs[2], "*",
+                "third segment is the profile wildcard: {segs:?}"
+            );
+        }
     }
 }

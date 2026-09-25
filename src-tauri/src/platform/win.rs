@@ -1048,9 +1048,17 @@ pub fn enable_backup_privilege() -> bool {
     // SAFETY: GetLastError immediately after the AdjustTokenPrivileges
     // call on this thread.
     let last_err = unsafe { windows::Win32::Foundation::GetLastError() };
-    let granted = ok.is_ok()
-        && last_err
-            != windows::Win32::Foundation::WIN32_ERROR(1313 /* ERROR_NO_SUCH_PRIVILEGE */);
+    // AdjustTokenPrivileges returns TRUE even when the privilege was NOT
+    // assigned: the not-assigned signal is ERROR_NOT_ALL_ASSIGNED (1300)
+    // in last-error. The old check compared against 1313
+    // (ERROR_NO_SUCH_PRIVILEGE) — impossible here, since a bad privilege
+    // NAME already failed at LookupPrivilegeValueW above — so an
+    // elevated-but-filtered process (no SeBackupPrivilege hold) was
+    // told the privilege was granted and turbo proceeded to fail
+    // opaquely instead of taking the honest user-visible fallback.
+    const ERROR_NOT_ALL_ASSIGNED: windows::Win32::Foundation::WIN32_ERROR =
+        windows::Win32::Foundation::WIN32_ERROR(1300);
+    let granted = ok.is_ok() && last_err != ERROR_NOT_ALL_ASSIGNED;
     // SAFETY: handle balance.
     unsafe { CloseHandle(token) }.ok();
     granted

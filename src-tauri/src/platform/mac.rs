@@ -790,7 +790,10 @@ fn parse_bulk_record(rec: &[u8]) -> Option<DirEntryData> {
         if bytes.last() == Some(&0) {
             bytes = &bytes[..bytes.len() - 1];
         }
-        name = bytes.iter().map(|&b| u16::from(b)).collect();
+        // ATTR_CMN_NAME is a UTF-8 string: decode UTF-8, then encode to
+        // the tree's UTF-16. The old byte-widening (`u16::from(b)`)
+        // mojibake'd every non-ASCII filename ("café" → "cafÃ©").
+        name = String::from_utf8_lossy(bytes).encode_utf16().collect();
     }
 
     // objtype (u32) — a vnode type VALUE (VREG=1, VDIR=2, VLNK=5…).
@@ -1465,27 +1468,22 @@ fn network_octets() -> (u64, u64) {
         let is_up = ifa.ifa_flags & 1 /* IFF_UP */ != 0;
         let is_loopback = ifa.ifa_flags & 8 /* IFF_LOOPBACK */ != 0;
         if is_en && is_up && !is_loopback {
+            // The statistics live in `ifa_data` (a `struct if_data64`
+            // owned by the list), NOT inside `ifa_addr` — the sockaddr_dl
+            // carries only the interface name and link-layer address.
+            // The old code dug into the sockaddr at a misaligned offset
+            // and read name/MAC bytes as counters (garbage + UB); keep
+            // the AF_LINK filter so each interface is counted exactly
+            // once (an interface appears once per address family).
             let addr = ifa.ifa_addr;
-            if !addr.is_null() {
-                // SAFETY: sockaddr_dl layout (len, family, then the
-                // interface data at 8 + sdl_nlen).
-                let sa = unsafe { &*addr };
-                if sa.sa_family == 18 {
-                    // AF_LINK
-                    let dl_bytes = unsafe {
-                        std::slice::from_raw_parts(addr as *const u8, usize::from(sa.sa_len))
-                    };
-                    if dl_bytes.len() >= 8 {
-                        let if_data_off = 8 + dl_bytes[4] as usize;
-                        if dl_bytes.len() >= if_data_off + std::mem::size_of::<IfData>() {
-                            // SAFETY: the if_data64 area within the sockaddr.
-                            let data =
-                                unsafe { &*(dl_bytes.as_ptr().add(if_data_off) as *const IfData) };
-                            inb = inb.saturating_add(data.ifi_ibytes);
-                            outb = outb.saturating_add(data.ifi_obytes);
-                        }
-                    }
-                }
+            let is_link = !addr.is_null() && unsafe { (*addr).sa_family } == 18; // AF_LINK
+            if is_link && !ifa.ifa_data.is_null() {
+                // SAFETY: for AF_LINK entries getifaddrs sets ifa_data to
+                // a valid, aligned `struct if_data64`; the list owns it
+                // until freeifaddrs below.
+                let data = unsafe { &*(ifa.ifa_data as *const IfData) };
+                inb = inb.saturating_add(data.ifi_ibytes);
+                outb = outb.saturating_add(data.ifi_obytes);
             }
         }
         cur = ifa.ifa_next;
@@ -1547,8 +1545,10 @@ fn process_snapshot() -> Vec<(u32, String, u64, u64, u64)> {
             pid as u32,
             name,
             // 100 ns units to mirror the Windows kernel/user fields.
-            ru.ri_system_time * 10_000,
-            ru.ri_user_time * 10_000,
+            // ri_*_time in rusage_info_v2 is NANOSECONDS — divide by 100
+            // (the old `* 10_000` inflated CPU by 10^6, clamped at 100%).
+            ru.ri_system_time / 100,
+            ru.ri_user_time / 100,
             ru.ri_resident_size,
         ));
     }
@@ -2038,6 +2038,12 @@ mod tests {
         std::fs::write(dir.join("alpha.txt"), b"hello world").expect("stage alpha");
         std::fs::write(dir.join("beta.bin"), [0u8; 4096]).expect("stage beta");
         std::fs::write(sub.join("gamma.log"), b"12345678").expect("stage gamma");
+        // Non-ASCII names (the mojibake regression: ATTR_CMN_NAME is
+        // UTF-8; the old byte-widening turned "café" into "cafÃ©" and
+        // mangled every supplementary-plane name).
+        std::fs::write(dir.join("café.txt"), b"accents").expect("stage café");
+        std::fs::write(sub.join("日本語.md"), b"cjk").expect("stage 日本語");
+        std::fs::write(sub.join("emoji-📁.txt"), b"non-bmp").expect("stage emoji");
         let listing = MacPlatform.list_dir(&dir.to_string_lossy());
         assert!(listing.error.is_none(), "engine error: {:?}", listing.error);
         let names: Vec<String> = listing
@@ -2048,6 +2054,20 @@ mod tests {
         assert!(names.contains(&"alpha.txt".to_string()), "names: {names:?}");
         assert!(names.contains(&"beta.bin".to_string()), "names: {names:?}");
         assert!(names.contains(&"sub".to_string()), "names: {names:?}");
+        assert!(
+            names.contains(&"café.txt".to_string()),
+            "mojibake regression (BMP): {names:?}"
+        );
+        assert!(
+            names.contains(&"日本語.md".to_string()),
+            "mojibake regression (CJK): {names:?}"
+        );
+        assert!(
+            names
+                .iter()
+                .any(|n| n.starts_with("emoji-") && n.ends_with(".txt")),
+            "mojibake regression (non-BMP surrogate pair): {names:?}"
+        );
         let beta = listing
             .entries
             .iter()
