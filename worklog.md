@@ -601,3 +601,40 @@ Stage Summary:
 - Quick Wins is now the third major mock↔engine parity port (after bubbles + mindmap); the pattern keeps proving out: every fabricated mock surface hides production bugs
 - Gates: tsc 0, vitest 48/48, build OK
 - Next: CI verify (0b7c38f), License dialog flow, Duplicates deep verification, hover-chip edge cases, wave-10 worklog
+
+---
+Task ID: 26
+Agent: main (Super Z)
+Task: REFACTORING PROJECT (sessions 7-8, backfilled from git history — the session crashed before logging) — safety net → bug waves → layout dedup → platform split
+
+Work Log:
+- SETUP: cloned DiskBytes + 6 reference repos (rust-best-practices, rust-skills, disktree, dua-cli, WinMemoryCleaner, cleaner) + 3 articles (JetBrains rewrite, kvark optimization gist, oneuptime memory). 4 parallel deep-read agents produced 80 concrete findings; baseline safety net verified green (141/141, fmt, clippy)
+- WAVE 1 (16 production bugs, each own commit + regression tests): surgery corruption ×3 (arena/dir_expects index conflation, file count, zero-on_disk filter) + root guard; layout ×3 (squarify u64 overflow, off-canvas flame members, sunburst arc spill); app-layer ×7 (generation authority, race-free surgery swap, scan lifecycle, apps cache inflight inversion, recycle accounting, unicode path_matches, turbo cancel + capped preview); platform ×3 (mac network-counter UB via ifa_data, mac filename mojibake, rusage units)
+- WAVE 1e quickwins: dead code removal, static browser table (killed a Box::leak), dead VM prelude, write-only set
+- CI EXPANSION: criterion benchmark suite, real-filesystem platform tests, cross-platform Test Matrix workflow (windows-latest + macos-latest + macos-14 arm64), full codebase mirrored to heictojpgpics/DiskBytes (the heicfast remote rejected the token's account)
+- WAVE 3 property tests: proptest suite (~4,700 generated cases) found 4 MORE real bugs (run-list decoder phantom zero-length runs, Snapshot::total() non-saturating overflow, squarify f32 precision collapse dropping trailing siblings silently, second squarify drop path at line 214)
+- WAVE 2c layout dedup: five engines share layout/mod.rs helpers; groups twins made structurally parity (compile-time assertions); 3 parity bugs fixed (picket-fence gap port, mindmap root label)
+- WAVE 2a/2b PLATFORM SPLIT (pure moves): win.rs 2497 lines → win/{apps,com,dir,license,monitor,recycle,sysinfo,turbo}; mac.rs 2108 lines → mac/{apps,dir,ffi,license,monitor,objc,shell,sysinfo}. Glob re-exports keep the crate::platform::os::X surface byte-identical. PR #1 open, CI iterating
+
+Stage Summary:
+- main @ 7a05909: 16 bug-fix commits + benches + property suite + platform tests + layout dedup — all pushed, Test Matrix was green except long-path/Win32-normalization tests (fixed in 7a05909)
+- refactor/platform-split @ 11614a0: both splits done but CI failing (93 mac errors: FFI visibility after module boundaries cut; 3 win errors: missing imports)
+- Session crashed mid-"three surgical fixes" (the FFI visibility distribution). Recovered in session 9 (see Task 27)
+
+---
+Task ID: 27
+Agent: main (Super Z)
+Task: SESSION 9 RECOVERY — rebuild environment, close out the platform-split CI loop
+
+Work Log:
+- Workspace was wiped by the session restart (no DiskBytes, no reference repos, no Rust). All work survived on GitHub (the frequent-push strategy worked exactly as designed). Reinstalled Rust 1.98.1 + clippy + rustfmt + cross targets; re-cloned DiskBytes from heictojpgpics mirror
+- Recovered full failure map from CI logs: mac = 93 errors (E0425 missing extern fns + E0616 private FFI struct fields + E0624 Block1::new + E0599/E0433 KnownFolder/Platform in tests); win = 3 E0425 + unused imports
+- KEY TOOLING WIN: built a local cross-check harness — a scratch crate that path-includes src-tauri/src/platform with only its real deps (windows 0.62 same features, objc2, png, diskbytes-core). cargo check --all-targets for x86_64-pc-windows-msvc AND aarch64-apple-darwin runs ON LINUX (aws-lc-sys blocks full app-crate cross-checks; the platform seam doesn't need it). CI error lists reproduce exactly locally — the blind-iteration loop (5 CI rounds yesterday) is now a local sub-minute loop
+- FIXES (5e7be38): pub(crate) on all ffi.rs mirror-struct fields; per-file explicit extern-fn imports across mac submodules; Block1::new pub(crate); mod.rs drops itemless shell::* glob + visibility-mismatched ffi::*/objc::* globs (tests import from submodules); win import fixes (monitor shadowed GetDriveTypeW + INVALID_FILE_ATTRIBUTES; recycle/sysinfo missing GetDriveTypeW/GetDiskFreeSpaceExW/GetVolumeInformationW); recycle_seam doc reunited; split-artifact cleanups (dup ffi header, orphaned section comments, stale win/mod.rs header)
+- Gates at push: xcheck windows 0/0, xcheck apple 0/0 (was 93 errors + 8 warnings), core fmt+clippy clean, 181/181 tests
+- MISTAKE CAUGHT: one commit landed in the wrong repo (shell cwd reset between calls put xcheck build artifacts into the parent container repo — no origin, no harm); reset and recommitted via git -C. Lesson: ALWAYS git -C /home/z/my-project/DiskBytes
+
+Stage Summary:
+- refactor/platform-split @ 5e7be38 pushed; CI validating on real windows/macos runners now
+- The xcheck harness lives at /home/z/my-project/xcheck (untracked, reusable for every future platform-seam change)
+- Next: CI verify → merge PR #1 → Wave 2 remaining items (commands/ oversized modules, state.rs) → per-repo learning cycles (disktree/dua-cli/WinMemoryCleaner/cleaner, 20 todos each) → mass platform test expansion
