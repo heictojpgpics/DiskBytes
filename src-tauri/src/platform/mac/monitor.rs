@@ -157,8 +157,7 @@ fn process_snapshot() -> Vec<(u32, String, u64, u64, u64)> {
     }
     let n = (got as usize) / 4;
     let mut out = Vec::new();
-    for i in 0..n.min(pids.len()) {
-        let pid = pids[i];
+    for &pid in pids.iter().take(n) {
         if pid <= 0 {
             continue;
         }

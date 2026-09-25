@@ -52,12 +52,10 @@ pub fn machine_guid() -> Option<String> {
         if service == 0 {
             return None;
         }
-        // SAFETY: Create-rule CFString key.
-        let key = CFStringCreateWithCString(
-            std::ptr::null(),
-            b"IOPlatformUUID\0".as_ptr().cast(),
-            0x0800_0100,
-        );
+        // SAFETY: Create-rule CFString key over a C literal (NUL
+        // included by the c"…" syntax).
+        let key =
+            CFStringCreateWithCString(std::ptr::null(), c"IOPlatformUUID".as_ptr(), 0x0800_0100);
         if key.is_null() {
             // SAFETY: release the service on the failure path.
             let _ = IOObjectRelease(service);
@@ -114,8 +112,15 @@ const KEYCHAIN_SERVICE: &str = "com.confines.diskbytes";
 const KEYCHAIN_ACCOUNT: &str = "license-state";
 
 fn cf_key(name: &str) -> *mut c_void {
-    // SAFETY: Create-rule CFString.
-    unsafe { CFStringCreateWithCString(std::ptr::null(), name.as_ptr().cast(), 0x0800_0100) }
+    // SAFETY: Create-rule CFString over a PROPERLY NUL-terminated
+    // CString — the old `name.as_ptr().cast()` handed a bare &str
+    // pointer to a C-string API (an out-of-bounds read that only
+    // worked because rodata literals happened to sit before zeros;
+    // caught while lint-hardening the mac platform).
+    let Ok(c) = CString::new(name) else {
+        return std::ptr::null_mut();
+    };
+    unsafe { CFStringCreateWithCString(std::ptr::null(), c.as_ptr(), 0x0800_0100) }
 }
 
 /// Build the SecItem attributes/query dictionary.

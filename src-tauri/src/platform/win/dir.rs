@@ -528,22 +528,24 @@ mod record_walk_tests {
     const FT_UNIX_EPOCH: i64 = 11_644_473_600 * 10_000_000;
     const FT_UNIX_EPOCH_PLUS_1S: i64 = FT_UNIX_EPOCH + 10_000_000;
 
+    /// Field offsets taken from the real struct once, at module level —
+    /// the record builder and the violation tests share them (ABI-locked
+    /// by `layout_offsets_are_locked`).
+    const O_CRT: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, CreationTime);
+    const O_WR: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, LastWriteTime);
+    const O_EOF: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, EndOfFile);
+    const O_ALC: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, AllocationSize);
+    const O_ATR: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileAttributes);
+    const O_LEN: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileNameLength);
+    const O_EA: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, EaSize);
+    const O_FID: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileId);
+    const HEADER: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileName);
+
     /// One synthetic record: header + UTF-16 name. `NextEntryOffset` is
     /// left 0 — `pack` chains records. Field offsets come from
     /// `offset_of!` on the real struct so the builder can never drift
     /// from the ABI.
     fn rec(name: &str, attrs: u32, logical: i64, alloc: i64) -> Vec<u8> {
-        const O_NEXT: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, NextEntryOffset);
-        const O_CRT: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, CreationTime);
-        const O_WR: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, LastWriteTime);
-        const O_EOF: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, EndOfFile);
-        const O_ALC: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, AllocationSize);
-        const O_ATR: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileAttributes);
-        const O_LEN: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileNameLength);
-        const O_EA: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, EaSize);
-        const O_FID: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileId);
-        const HEADER: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileName);
-
         let name16: Vec<u16> = name.encode_utf16().collect();
         let mut b = vec![0u8; HEADER + name16.len() * 2];
         b[O_CRT..O_CRT + 8].copy_from_slice(&FT_UNIX_EPOCH.to_le_bytes());
@@ -559,7 +561,6 @@ mod record_walk_tests {
         for (i, &u) in name16.iter().enumerate() {
             b[HEADER + i * 2..HEADER + i * 2 + 2].copy_from_slice(&u.to_le_bytes());
         }
-        let _ = O_NEXT; // set by pack
         b
     }
 
@@ -568,9 +569,9 @@ mod record_walk_tests {
     /// Returns the u64-word buffer and the `returned` byte count.
     fn pack(recs: Vec<Vec<u8>>) -> (Vec<u64>, usize) {
         let mut recs = recs;
-        for i in 0..recs.len() {
-            while recs[i].len() % 8 != 0 {
-                recs[i].push(0);
+        for r in &mut recs {
+            while r.len() % 8 != 0 {
+                r.push(0);
             }
         }
         let mut out: Vec<u8> = Vec::new();
@@ -691,7 +692,6 @@ mod record_walk_tests {
     fn name_past_returned_is_a_violation() {
         let mut r = rec("waytoolongname.txt", 0, 1, 1);
         // Claim a name far longer than the buffer holds.
-        const O_LEN: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileNameLength);
         r[O_LEN..O_LEN + 4].copy_from_slice(&100_000u32.to_le_bytes());
         let mut buffer: Vec<u64> = r
             .chunks_exact(8)
@@ -708,7 +708,6 @@ mod record_walk_tests {
     #[test]
     fn odd_utf16_length_is_a_violation() {
         let mut r = rec("odd.bin", 0, 1, 1);
-        const O_LEN: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileNameLength);
         r[O_LEN..O_LEN + 4].copy_from_slice(&3u32.to_le_bytes());
         let mut buffer: Vec<u64> = r
             .chunks_exact(8)
@@ -732,7 +731,6 @@ mod record_walk_tests {
         }
         let first_len = recs[0].len() as u32;
         recs[0][0..4].copy_from_slice(&first_len.to_le_bytes());
-        const O_LEN: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileNameLength);
         recs[1][O_LEN..O_LEN + 4].copy_from_slice(&90_000u32.to_le_bytes());
         let mut flat: Vec<u8> = Vec::new();
         for r in &recs {

@@ -61,10 +61,14 @@ impl ComApartment {
     }
 }
 
+/// Per-path trash outcome: the path and whether the move succeeded
+/// (with the OS error string when it did not).
+pub type TrashOutcome = (String, Result<(), String>);
+
 /// The Trash move: `NSWorkspace.recycleURLs:completionHandler:` runs
 /// asynchronously; we pump the run loop until the handler fires
 /// (bounded wait, ≤ 60 s).
-pub fn recycle_to_trash(paths: &[String]) -> Result<Vec<(String, Result<(), String>)>, String> {
+pub fn recycle_to_trash(paths: &[String]) -> Result<Vec<TrashOutcome>, String> {
     unsafe {
         let ws = workspace_shared();
         let urls: Vec<Id> = paths.iter().map(|p| file_url(p)).collect();

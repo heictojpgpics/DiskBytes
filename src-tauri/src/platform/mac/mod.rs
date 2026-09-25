@@ -129,7 +129,12 @@ mod tests {
             cursor += 8;
         }
         let name_at = cursor; // variable data after the fixed values
-        let padded_name_len = name.len().div_ceil(4) * 4; // NUL + pad to 4
+                              // NUL terminator + pad to 4: the +1 must be INSIDE the ceil —
+                              // a 12-byte name needs 12+1 = 13 bytes rounded up to 16, not 12
+                              // (a multiple-of-4 name length used to drop the NUL byte and
+                              // panic the write; CI caught it via the list-only test's
+                              // "degraded.bin").
+        let padded_name_len = (name.len() + 1).div_ceil(4) * 4;
         let total = name_at + padded_name_len;
 
         rec.resize(total, 0);

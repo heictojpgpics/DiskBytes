@@ -42,8 +42,9 @@ impl Platform for MacPlatform {
                 }
             }
         };
-        // SAFETY: open() on a NUL-terminated path, O_RDONLY|O_DIRECTORY.
-        let fd = unsafe { libc_open(c_path.as_ptr(), 0x0000 | 0x0010_0000) };
+        // SAFETY: open() on a NUL-terminated path; O_DIRECTORY (O_RDONLY
+        // is 0, spelled out for the reader).
+        let fd = unsafe { libc_open(c_path.as_ptr(), 0x0010_0000) };
         if fd < 0 {
             eprintln!("[mac-engine] open failed errno={} path={path}", errno());
             return DirListing {

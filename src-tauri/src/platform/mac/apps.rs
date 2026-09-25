@@ -118,9 +118,12 @@ fn read_info_plist(
         return (None, None, None, String::new());
     }
     let get_str = |key: &str| -> Option<String> {
-        // SAFETY: Create-rule key, read-only dictionary lookup, release.
+        // SAFETY: Create-rule key over a PROPERLY NUL-terminated CString
+        // (a bare &str pointer would be an out-of-bounds read for the
+        // C-string API), read-only dictionary lookup, release.
+        let c = CString::new(key).ok()?;
         unsafe {
-            let k = CFStringCreateWithCString(std::ptr::null(), key.as_ptr().cast(), 0x0800_0100);
+            let k = CFStringCreateWithCString(std::ptr::null(), c.as_ptr(), 0x0800_0100);
             let mut v: *const c_void = std::ptr::null();
             let present = CFDictionaryGetValueIfPresent(plist, k, &mut v);
             cf_release(k);

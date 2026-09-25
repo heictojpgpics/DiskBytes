@@ -62,6 +62,16 @@ jobs:
         working-directory: src-tauri
         shell: bash
 
+      - name: "Gate: clippy -D warnings (app crate, platform modules)"
+        # The ubuntu static-gates job never compiles the windows/macos
+        # platform code — this is the only place the app crate's
+        # per-OS modules get linted with -D warnings (the mac ladder
+        # lint pass found 4 latent issues + 2 NUL-termination UBs the
+        # first time it ran).
+        run: cargo clippy -p diskbytes --all-targets -- -D warnings
+        working-directory: src-tauri
+        shell: bash
+
       - name: "Core tests (debug — overflow checks ON)"
         run: cargo test -p diskbytes-core
         working-directory: src-tauri
