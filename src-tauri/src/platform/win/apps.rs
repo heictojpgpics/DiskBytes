@@ -16,6 +16,10 @@ use super::*;
 
 /// One raw registry Uninstall entry (pre-matching).
 #[derive(Debug, Clone, Default)]
+/// Close processes whose images live under `dir` (spec §11: EnumWindows
+/// → WM_CLOSE → 5 s wait → TerminateProcess). Returns the image paths
+/// that were running (for the UI's "closed N processes" note).
+
 pub struct RawRegistryApp {
     /// Full key path (hive + subkey) — the stable id.
     pub id: String,

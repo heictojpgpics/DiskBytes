@@ -58,7 +58,3 @@ impl MacPlatform {
 // ─────────────────────────────────────────────────────────────────────
 // Recycle (Trash) surface — mirrors win.rs.
 // ─────────────────────────────────────────────────────────────────────
-
-/// Per-volume Trash policy: Finder's Trash always works on writable
-/// local volumes (the BitBucket registry concept is Windows-only).
-#[derive(Debug, Clone, Copy)]

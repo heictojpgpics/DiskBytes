@@ -26,6 +26,9 @@ pub mod recycle_seam {
 
 /// Per-drive Recycle Bin policy (spec §9 pre-flight rules).
 #[derive(Debug, Clone, Copy)]
+/// Re-exports for the recycle module (doc 02 §2: recycle.rs calls
+/// windows-rs only through these).
+
 pub struct BinPolicy {
     /// True when Windows silently permanent-deletes (NukeOnDelete == 1).
     pub nuke_on_delete: bool,
@@ -165,7 +168,3 @@ pub fn path_missing(display_path: &str) -> bool {
     let attrs = unsafe { GetFileAttributesW(PCWSTR(wide_path.as_ptr())) };
     attrs == INVALID_FILE_ATTRIBUTES
 }
-
-/// COM apartment initialization guard (recycle thread). `CoUninitialize`
-/// runs on drop EXACTLY once per successful `CoInitializeEx` (including
-/// the S_FALSE "already initialized" case — balancing is required).

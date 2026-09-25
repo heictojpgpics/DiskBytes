@@ -4,6 +4,10 @@
 
 use super::*;
 
+/// COM apartment initialization guard (recycle thread). `CoUninitialize`
+/// runs on drop EXACTLY once per successful `CoInitializeEx` (including
+/// the S_FALSE "already initialized" case — balancing is required).
+
 pub struct ComApartment {
     /// The HRESULT returned by `CoInitializeEx` (S_FALSE = already init).
     hr: windows::core::HRESULT,
@@ -39,6 +43,3 @@ impl Drop for ComApartment {
         let _ = self.hr;
     }
 }
-
-/// Disk storage snapshot (spec §6.5) for the volume containing `path`.
-#[derive(Debug, Clone)]

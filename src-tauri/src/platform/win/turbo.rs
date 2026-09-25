@@ -14,6 +14,11 @@ use windows::Win32::Storage::FileSystem::{
 
 use super::*;
 
+/// `AdjustTokenPrivileges` sets this last-error when the privilege was
+/// NOT assigned (it still returns TRUE — see `enable_backup_privilege`).
+const ERROR_NOT_ALL_ASSIGNED: windows::Win32::Foundation::WIN32_ERROR =
+    windows::Win32::Foundation::WIN32_ERROR(1300);
+
 pub struct TurboGeometry {
     pub bytes_per_sector: u32,
     pub bytes_per_cluster: u32,
@@ -195,8 +200,6 @@ pub fn enable_backup_privilege() -> bool {
     // elevated-but-filtered process (no SeBackupPrivilege hold) was
     // told the privilege was granted and turbo proceeded to fail
     // opaquely instead of taking the honest user-visible fallback.
-    const ERROR_NOT_ALL_ASSIGNED: windows::Win32::Foundation::WIN32_ERROR =
-        windows::Win32::Foundation::WIN32_ERROR(1300);
     let granted = ok.is_ok() && last_err != ERROR_NOT_ALL_ASSIGNED;
     // SAFETY: handle balance.
     unsafe { CloseHandle(token) }.ok();

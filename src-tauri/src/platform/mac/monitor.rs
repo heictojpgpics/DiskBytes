@@ -3,6 +3,8 @@
 use super::ffi::*;
 use super::*;
 
+/// The raw monitor sample (mirrors win.rs::RawMonitor).
+
 pub struct RawMonitor {
     pub ticks: CpuTicks,
     pub threads: u32,

@@ -3,6 +3,10 @@
 use super::ffi::*;
 use super::*;
 
+/// Per-volume Trash policy: Finder's Trash always works on writable
+/// local volumes (the BitBucket registry concept is Windows-only).
+#[derive(Debug, Clone, Copy)]
+
 pub struct BinPolicy {
     /// Always false on macOS (Trash is the only path).
     pub nuke_on_delete: bool,
@@ -176,8 +180,3 @@ pub fn turbo_read_mft(
 pub fn enable_backup_privilege() -> bool {
     false
 }
-
-/// One /Applications app entry (the registry-analogue; Info.plist
-/// values). Field names mirror win.rs exactly — the command layer is
-/// platform-generic.
-#[derive(Debug, Clone, Default)]

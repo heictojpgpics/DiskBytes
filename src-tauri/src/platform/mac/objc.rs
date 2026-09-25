@@ -185,7 +185,3 @@ fn block_isa() -> *const AnyClass {
 // ─────────────────────────────────────────────────────────────────────
 // MacPlatform: the Platform trait implementation (getattrlistbulk).
 // ─────────────────────────────────────────────────────────────────────
-
-/// The macOS host. Registered in Tauri managed state exactly like
-/// `WindowsPlatform` (the `HostPlatform` alias resolves it).
-#[derive(Debug, Clone, Copy, Default)]

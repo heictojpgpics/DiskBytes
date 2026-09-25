@@ -4,6 +4,11 @@
 use super::ffi::*;
 use super::*;
 
+/// One /Applications app entry (the registry-analogue; Info.plist
+/// values). Field names mirror win.rs exactly — the command layer is
+/// platform-generic.
+#[derive(Debug, Clone, Default)]
+
 pub struct RawRegistryApp {
     /// Bundle identifier — the stable id (win.rs `id`).
     pub id: String,
@@ -206,5 +211,3 @@ pub fn launch_and_wait_uninstaller(cmd_line: &str) -> Result<i32, String> {
         .map_err(|e| format!("Couldn't run {exe}: {e}"))?;
     Ok(status.code().unwrap_or(-1))
 }
-
-/// The raw monitor sample (mirrors win.rs::RawMonitor).

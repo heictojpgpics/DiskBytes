@@ -501,5 +501,3 @@ impl WindowsPlatform {
 // primitives live HERE so recycle.rs only consumes re-exported helpers
 // (a future platform-macos crate mirrors this single seam).
 // ---------------------------------------------------------------------------
-/// Re-exports for the recycle module (doc 02 §2: recycle.rs calls
-/// windows-rs only through these).
