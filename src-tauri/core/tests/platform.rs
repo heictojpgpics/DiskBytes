@@ -161,14 +161,69 @@ fn deep_nesting_32_levels() {
 }
 
 #[test]
-fn long_path_beyond_maxpath() {
-    let dir = stage("longpath");
-    // 60 × 40-char segments ≈ 2400 chars — well past Windows' 260 limit;
-    // the core stores names as offsets, never paths, so this must hold.
-    let mut cur = dir.clone();
+fn long_paths_supported_at_tree_level() {
+    // The CORE's long-path contract: names live as offsets in the UTF-16
+    // arena (no per-node paths), and `node_path` rebuilds ANY length on
+    // demand — 60 × 40-char segments ≈ 2400 chars, past Windows'
+    // MAX_PATH 260 and macOS' PATH_MAX 1024. No host filesystem is
+    // involved: std::fs itself cannot express such paths without the
+    // engines' verbatim (\\?\) prefixing, which is the PLATFORM
+    // layer's job, not the core's.
+    let mut t = Tree::new(1);
+    t.add_root_path(0, "C:\\long");
+    let mut parent = 0u32;
     for i in 0..60 {
-        cur = cur.join(format!("s{i:02}_{}", "x".repeat(40)));
-        std::fs::create_dir_all(&cur).expect("long segment");
+        let seg = format!("s{i:02}_{}", "x".repeat(40));
+        let mut n = Node::new_dir();
+        n.modified = 1;
+        let base = t.append_batch(
+            parent,
+            vec![BatchEntry {
+                name: seg.encode_utf16().collect(),
+                node: n,
+            }],
+        );
+        parent = base;
+    }
+    let mut leaf = Node::new_file();
+    leaf.logical = 7;
+    leaf.on_disk = 4096;
+    leaf.set_category(FileCategory::from_name(
+        &"deep.txt".encode_utf16().collect::<Vec<u16>>(),
+    ));
+    t.append_batch(
+        parent,
+        vec![BatchEntry {
+            name: "deep.txt".encode_utf16().collect(),
+            node: leaf,
+        }],
+    );
+    rollup::finalize(&mut t);
+    let deep = (0..t.len() as u32)
+        .find(|&id| t.name(id) == "deep.txt")
+        .expect("deep.txt present");
+    let path = t.node_path(deep);
+    assert!(
+        path.len() > 260,
+        "rebuilt path should exceed MAX_PATH: {}",
+        path.len()
+    );
+    assert!(path.starts_with("C:\\long\\s00_"));
+    // And it navigates back: resolve_display_path finds the node.
+    assert_eq!(t.resolve_display_path(&path), Some(deep));
+}
+
+#[test]
+fn real_fs_nesting_to_host_path_limit() {
+    // Real-filesystem nesting as deep as any host expresses without
+    // verbatim prefixes: 24 × 30-char segments ≈ 720 chars (under
+    // macOS' PATH_MAX 1024; Windows handles it under the runner's
+    // long-path-enabled registry setting).
+    let dir = stage("longpath");
+    let mut cur = dir.clone();
+    for i in 0..24 {
+        cur = cur.join(format!("s{i:02}_{}", "x".repeat(30)));
+        std::fs::create_dir_all(&cur).expect("host-representable segment");
     }
     std::fs::write(cur.join("deep.txt"), b"deep").expect("deep leaf");
     let t = build_from_fs(&dir);
@@ -176,11 +231,7 @@ fn long_path_beyond_maxpath() {
         .find(|&id| t.name(id) == "deep.txt")
         .expect("deep.txt present");
     let path = t.node_path(deep);
-    assert!(
-        path.len() > 260,
-        "path should exceed MAX_PATH: {}",
-        path.len()
-    );
+    assert!(path.len() > 400, "deep real path: {}", path.len());
 }
 
 #[test]
@@ -218,7 +269,9 @@ fn many_siblings_500() {
 }
 
 /// Restores 000-mode dirs when dropped (test hygiene on Unix hosts).
+#[cfg(unix)]
 struct PermissionRestore<'a>(&'a std::path::Path);
+#[cfg(unix)]
 impl Drop for PermissionRestore<'_> {
     fn drop(&mut self) {
         #[cfg(unix)]
