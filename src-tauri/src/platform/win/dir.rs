@@ -124,7 +124,16 @@ fn walk_records(buffer: &[u64], returned: usize) -> (Vec<DirEntryData>, Option<S
     let mut offset = 0usize;
     loop {
         const HEADER_SIZE: usize = std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileName);
-        if offset > returned.saturating_sub(HEADER_SIZE) {
+        // is_none_or is MSRV 1.82; the app targets 1.80 (spec) — map_or.
+        if offset
+            .checked_add(HEADER_SIZE)
+            .map_or(true, |end| end > returned)
+        {
+            // A record needs HEADER_SIZE bytes: covers both a mid-chain
+            // offset past the end AND a buffer shorter than one header
+            // (the old `offset > returned.saturating_sub(HEADER)` let
+            // the too-short case fall through to the name check with a
+            // misleading message — CI's first Windows run caught it).
             return (
                 entries,
                 Some("record header exceeds the returned length".into()),
@@ -600,8 +609,11 @@ mod record_walk_tests {
 
     #[test]
     fn layout_offsets_are_locked() {
-        // The ABI the manual record builder depends on (matches the
-        // published FILE_ID_FULL_DIR_INFORMATION layout).
+        // The ABI the manual record builder depends on — VERIFIED ON THE
+        // REAL WINDOWS RUNNER: FileId sits at 72, not 68 (LARGE_INTEGER
+        // alignment inserts 4 bytes of padding after EaSize at 64), so
+        // FileName starts at 80. The first run of this test caught the
+        // hand-written 68/76 assumption.
         assert_eq!(
             std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, NextEntryOffset),
             0
@@ -616,11 +628,11 @@ mod record_walk_tests {
         );
         assert_eq!(
             std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileId),
-            68
+            72
         );
         assert_eq!(
             std::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileName),
-            76
+            80
         );
     }
 

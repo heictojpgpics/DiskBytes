@@ -3,7 +3,11 @@
 
 use std::ffi::{c_int, CStr, CString};
 
-use diskbytes_core::platform::{DirEntryData, DirListing, KnownFolder, ListError, Platform};
+// Through the parent seam (crate::platform re-exports the core types),
+// exactly like win/dir.rs — importing diskbytes_core::platform directly
+// would leave the parent re-export unconsumed on macOS (CI's new app
+// clippy gate flags it as unused).
+use crate::platform::{DirEntryData, DirListing, KnownFolder, ListError, Platform};
 
 use super::ffi::{
     getattrlistbulk, getfsstat, libc_close, libc_errno, libc_open, statfs, AttrList, StatFs,

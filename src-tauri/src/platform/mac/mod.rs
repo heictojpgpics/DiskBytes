@@ -26,6 +26,9 @@
 // call site reads as an unsafe operation.
 #![allow(unused_unsafe)]
 #![allow(clippy::undocumented_unsafe_blocks)]
+// The macOS FFI seam is unsafe by design (same posture as win/mod.rs —
+// the crate denies unsafe_code everywhere else).
+#![allow(unsafe_code)]
 
 // ─────────────────────────────────────────────────────────────────────
 // Darwin / CoreFoundation / IOKit / Security FFI (hand-declared; the
