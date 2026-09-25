@@ -105,7 +105,10 @@ pub struct CommitPlan {
 pub struct AbsorbedItem {
     /// The absorbed (nested) item's path.
     pub path: String,
-    /// Index into `CommitPlan::items` of the absorbing root.
+    /// Index into `CommitPlan::items` of the absorbing root (metadata
+    /// for future UI grouping; read by tests — clippy's dead-code scan
+    /// intentionally ignores test reads).
+    #[allow(dead_code)]
     pub absorbed_by: usize,
 }
 

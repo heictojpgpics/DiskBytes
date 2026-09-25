@@ -57,6 +57,9 @@ pub struct CleanupCommitted {
 /// per-item problems land in the response's `failed` list.
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)] // State extraction is the tauri command contract
+#[allow(clippy::too_many_lines)] // lifecycle orchestrator: gate → resolve → recycle → surgery → swap →
+                                 // caches → event; the ordering invariants are documented in-body
+                                 // (same posture as start_scan/start_scan_turbo)
 pub async fn commit_cleanup(
     generation: u64,
     items: Vec<CommitItem>,

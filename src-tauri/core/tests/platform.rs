@@ -321,17 +321,31 @@ fn permission_denied_dir_is_survivable() {
 fn windows_reserved_shape_names_kept_byte_exact() {
     // Names that LOOK reserved/odd but are legal on modern NTFS via
     // \\?\ paths; on other hosts they're plain names. The core must
-    // store whatever the OS produced, byte-exact.
+    // store whatever the OS ACTUALLY produced, byte-exact — Win32
+    // normalization may rewrite the name at CREATE time (e.g. trailing
+    // dots/spaces are stripped: "trailing.dot." lands on disk as
+    // "trailing.dot"), so the assertion compares against the REAL
+    // directory listing, not the requested name (CI caught this on the
+    // Windows runner).
     let dir = stage("names");
-    for n in ["CON.shaped.txt", "aux.like.bin", "trailing.dot."] {
-        if std::fs::write(dir.join(n), b"x").is_ok() {
-            let t = build_from_fs(&dir);
-            let units: Vec<u16> = n.encode_utf16().collect();
-            assert!(
-                (0..t.len() as u32).any(|id| t.name_u16(id) == units.as_slice()),
-                "odd name {n:?} lost"
-            );
-        }
+    let requested = ["CON.shaped.txt", "aux.like.bin", "trailing.dot."];
+    for n in requested {
+        let _ = std::fs::write(dir.join(n), b"x");
+    }
+    // What the OS actually created.
+    let on_disk: Vec<String> = std::fs::read_dir(&dir)
+        .expect("read staged names dir")
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(!on_disk.is_empty(), "at least one name survived creation");
+    let t = build_from_fs(&dir);
+    for real in &on_disk {
+        let units: Vec<u16> = real.encode_utf16().collect();
+        assert!(
+            (0..t.len() as u32).any(|id| t.name_u16(id) == units.as_slice()),
+            "on-disk name {real:?} lost or mangled"
+        );
     }
 }
 
