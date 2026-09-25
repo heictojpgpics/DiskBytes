@@ -1,7 +1,13 @@
 //! Volume snapshot, elevation, turbo stubs (turbo is Windows-only).
 
+use std::ffi::{c_void, CString};
+
+use objc2::msg_send;
+use objc2::runtime::AnyObject;
+
 use super::dir::statfs_of;
 use super::objc::Block1;
+use super::objc::Id;
 use super::objc::{
     cf_array_of, cf_string_to_string, file_url, run_loop_current, run_loop_run_mode,
     workspace_shared,

@@ -2,6 +2,10 @@
 //! volumes. Carries the layout tests.
 
 use windows::core::PCWSTR;
+use windows::Win32::Storage::FileSystem::{
+    GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDriveStringsW, GetVolumeInformationW,
+    INVALID_FILE_ATTRIBUTES,
+};
 
 use super::wide;
 

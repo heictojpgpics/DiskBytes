@@ -6,6 +6,19 @@
 //! getattrlist constants. Verbatim move from the old mac.rs.
 #![allow(clippy::upper_case_acronyms)]
 
+use std::ffi::{c_char, c_int, c_void};
+
+/// Security.framework `OSStatus`.
+pub(crate) type OSStatus = i32;
+/// CoreFoundation `Boolean`.
+pub(crate) type Boolean = u8;
+/// Mach host port.
+pub(crate) type MachPort = u32;
+/// Mach host_t.
+pub(crate) type HostT = u32;
+/// Mach kern_return_t.
+pub(crate) type KernReturn = i32;
+
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Timeval {

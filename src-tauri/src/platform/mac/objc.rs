@@ -1,14 +1,19 @@
 //! ObjC / CoreFoundation runtime helpers: NSString bridging, file
 //! URLs, arrays, run-loop pumping, Block1 trampoline.
 
+use std::ffi::{c_void, CStr, CString};
+
+use objc2::msg_send;
+use objc2::runtime::{AnyClass, AnyObject};
+
 use super::MacPlatform;
 
 // ─────────────────────────────────────────────────────────────────────
 // ObjC runtime (objc2) — raw id + class lookups, toll-free CF bridging.
 // ─────────────────────────────────────────────────────────────────────
 
-use objc2::msg_send;
-use objc2::runtime::{AnyClass, AnyObject};
+/// An ObjC object pointer (the C ABI id).
+pub(crate) type Id = *mut AnyObject;
 
 pub(crate) unsafe fn ns_string(s: &str) -> Id {
     // SAFETY: Create-rule CFString (toll-free NSString); NUL-free input.

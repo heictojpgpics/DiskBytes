@@ -2,6 +2,7 @@
 //! checks. Verbatim move from `win.rs`.
 
 use windows::core::PCWSTR;
+use windows::Win32::Storage::FileSystem::{GetFileAttributesW, INVALID_FILE_ATTRIBUTES};
 
 use super::wide;
 

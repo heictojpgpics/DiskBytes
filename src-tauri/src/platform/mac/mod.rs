@@ -27,24 +27,10 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::undocumented_unsafe_blocks)]
 
-use std::ffi::{c_char, c_int, c_void, CStr, CString};
-
-use diskbytes_core::monitor::{CpuTicks, VolumeSample};
-use diskbytes_core::platform::{DirEntryData, DirListing, KnownFolder, ListError, Platform};
-
 // ─────────────────────────────────────────────────────────────────────
 // Darwin / CoreFoundation / IOKit / Security FFI (hand-declared; the
 // struct layouts are asserted in the tests module).
 // ─────────────────────────────────────────────────────────────────────
-
-type OSStatus = i32;
-type Boolean = u8;
-type MachPort = u32;
-type HostT = u32;
-type KernReturn = i32;
-
-/// An ObjC object pointer (the C ABI id).
-type Id = *mut AnyObject;
 
 // Split into cohesive submodules (worklog wave 2b): ffi is the
 // shared hand-declared surface; the glob re-exports keep the

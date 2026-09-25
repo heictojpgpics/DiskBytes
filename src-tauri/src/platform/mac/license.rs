@@ -2,6 +2,9 @@
 //! serial, CPUID brand, Keychain, hardlink identity.
 
 use super::dir::statfs_of;
+use std::ffi::{c_void, CString};
+
+use super::ffi::OSStatus;
 use super::objc::{cf_release, cf_string_to_string};
 
 // ============================================================================

@@ -1,5 +1,9 @@
 //! Raw machine sampling: CPU ticks, memory, network, processes.
 
+use std::ffi::{c_void, CStr, CString};
+
+use diskbytes_core::monitor::{CpuTicks, VolumeSample};
+
 use super::dir::{is_browsable_volume, statfs_of, volume_inventory};
 use super::ffi::{
     IfAddrs, IfData, RusageInfoV2, VmStatistics64, HOST_CPU_LOAD_INFO, HOST_VM_INFO64,

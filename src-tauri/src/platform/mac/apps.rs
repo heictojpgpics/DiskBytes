@@ -1,7 +1,13 @@
 //! Applications surface: Info.plist registry scan, MSIX stubs,
 //! process close, uninstaller exec.
 
+use std::ffi::{c_void, CString};
+
+use objc2::msg_send;
+use objc2::runtime::AnyObject;
+
 use super::dir::statfs_of;
+use super::objc::Id;
 use super::objc::{cf_release, cf_string_to_string, cf_url_path, workspace_shared};
 
 /// One /Applications app entry (the registry-analogue; Info.plist
