@@ -6,7 +6,10 @@ use std::ffi::{c_void, CStr, CString};
 use objc2::msg_send;
 use objc2::runtime::{AnyClass, AnyObject};
 
-use super::MacPlatform;
+use super::ffi::{
+    Boolean, CFArrayAppendValue, CFArrayCreateMutable, CFRelease, CFStringCreateWithCString,
+    CFStringGetCString, CFStringGetLength, CFURLCreateWithFileSystemPath,
+};
 
 // ─────────────────────────────────────────────────────────────────────
 // ObjC runtime (objc2) — raw id + class lookups, toll-free CF bridging.
@@ -149,7 +152,7 @@ pub(crate) struct Block1<F: Fn(*mut AnyObject)> {
 
 impl<F: Fn(*mut AnyObject)> Block1<F> {
     /// Build an escaping block (leaked; one commit per queue, bounded).
-    fn new(f: F) -> *const Block1<F> {
+    pub(crate) fn new(f: F) -> *const Block1<F> {
         let this = Box::into_raw(Box::new(Block1 {
             literal: BlockLiteral {
                 isa: block_isa(),
@@ -185,7 +188,3 @@ fn block_isa() -> *const AnyClass {
     });
     p as *const AnyClass
 }
-
-// ─────────────────────────────────────────────────────────────────────
-// MacPlatform: the Platform trait implementation (getattrlistbulk).
-// ─────────────────────────────────────────────────────────────────────

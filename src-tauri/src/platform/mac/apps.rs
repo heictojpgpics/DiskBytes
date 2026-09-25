@@ -7,6 +7,10 @@ use objc2::msg_send;
 use objc2::runtime::AnyObject;
 
 use super::dir::statfs_of;
+use super::ffi::{
+    CFArrayGetCount, CFArrayGetValueAtIndex, CFDataCreate, CFDictionaryGetValueIfPresent,
+    CFPropertyListCreateWithData, CFStringCreateWithCString,
+};
 use super::objc::Id;
 use super::objc::{cf_release, cf_string_to_string, cf_url_path, workspace_shared};
 

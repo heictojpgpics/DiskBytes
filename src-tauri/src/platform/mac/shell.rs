@@ -3,6 +3,7 @@
 use objc2::msg_send;
 use objc2::runtime::AnyClass;
 
+use super::ffi::NSPasteboardTypeString;
 use super::objc::Id;
 use super::objc::{cf_array_of, file_url, ns_string, open_config_default, workspace_shared};
 use super::MacPlatform;

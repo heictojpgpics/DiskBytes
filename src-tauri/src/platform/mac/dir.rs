@@ -6,9 +6,10 @@ use std::ffi::{c_int, CStr, CString};
 use diskbytes_core::platform::{DirEntryData, DirListing, KnownFolder, ListError, Platform};
 
 use super::ffi::{
-    AttrList, StatFs, ATTR_CMN_CRTIME, ATTR_CMN_ERROR, ATTR_CMN_MODTIME, ATTR_CMN_NAME,
-    ATTR_CMN_OBJTYPE, ATTR_CMN_RETURNED_ATTRS, ATTR_FILE_ALLOCSIZE, ATTR_FILE_TOTALSIZE,
-    FSOPT_NOFOLLOW, VDIR, VLNK, VNON, VREG,
+    getattrlistbulk, getfsstat, libc_close, libc_errno, libc_open, statfs, AttrList, StatFs,
+    ATTR_CMN_CRTIME, ATTR_CMN_ERROR, ATTR_CMN_MODTIME, ATTR_CMN_NAME, ATTR_CMN_OBJTYPE,
+    ATTR_CMN_RETURNED_ATTRS, ATTR_FILE_ALLOCSIZE, ATTR_FILE_TOTALSIZE, FSOPT_NOFOLLOW, VDIR, VLNK,
+    VNON,
 };
 
 /// The macOS host. Registered in Tauri managed state exactly like
@@ -399,7 +400,3 @@ pub(crate) fn statfs_of(c_path: &CStr) -> Option<StatFs> {
     let rc = unsafe { statfs(c_path.as_ptr(), &mut st) };
     (rc == 0).then_some(st)
 }
-
-// ─────────────────────────────────────────────────────────────────────
-// The shell surface (mirrors win.rs's impl block + free functions).
-// ─────────────────────────────────────────────────────────────────────

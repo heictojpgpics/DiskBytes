@@ -3,8 +3,7 @@
 
 use windows::core::PCWSTR;
 use windows::Win32::Storage::FileSystem::{
-    GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDriveStringsW, GetVolumeInformationW,
-    INVALID_FILE_ATTRIBUTES,
+    GetDiskFreeSpaceExW, GetLogicalDriveStringsW, GetVolumeInformationW,
 };
 
 use super::wide;

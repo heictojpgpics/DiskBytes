@@ -4,7 +4,12 @@
 use super::dir::statfs_of;
 use std::ffi::{c_void, CString};
 
-use super::ffi::OSStatus;
+use super::ffi::{
+    cf_boolean_true, sysctlbyname, CFDataCreate, CFDataGetBytePtr, CFDataGetLength,
+    CFDictionaryAddValue, CFDictionaryCreateMutable, CFStringCreateWithCString, IOObjectRelease,
+    IORegistryEntryCreateCFProperty, IOServiceGetMatchingService, IOServiceMatching, SecItemAdd,
+    SecItemCopyMatching, SecItemDelete,
+};
 use super::objc::{cf_release, cf_string_to_string};
 
 // ============================================================================

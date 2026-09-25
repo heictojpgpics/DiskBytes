@@ -1,6 +1,7 @@
 //! Volume queries (StorageSnapshot), elevation, cluster size.
 
 use windows::core::PCWSTR;
+use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetVolumeInformationW};
 
 use super::{drive_root_of, wide};
 

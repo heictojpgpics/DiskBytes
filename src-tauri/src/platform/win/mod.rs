@@ -1,5 +1,5 @@
-//! `platform/win.rs` — the ONLY file allowed to call windows-rs directly
-//! (doc 02 §2). Implements [`Platform`] for Windows:
+//! `platform/win/` — the ONLY module tree allowed to call windows-rs
+//! directly (doc 02 §2). Implements [`Platform`] for Windows:
 //!
 //! - `list_dir`: the spec §4 engine — `NtQueryDirectoryFile` with
 //!   `FileIdFullDirectoryInformation` (class 38), one reusable 256 KiB

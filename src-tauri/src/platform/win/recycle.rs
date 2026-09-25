@@ -2,10 +2,14 @@
 //! checks. Verbatim move from `win.rs`.
 
 use windows::core::PCWSTR;
-use windows::Win32::Storage::FileSystem::{GetFileAttributesW, INVALID_FILE_ATTRIBUTES};
+use windows::Win32::Storage::FileSystem::{
+    GetDriveTypeW, GetFileAttributesW, INVALID_FILE_ATTRIBUTES,
+};
 
 use super::wide;
 
+/// The windows-rs surface the recycle module is allowed to call
+/// (doc 02 §2: src/recycle.rs calls windows-rs only through these).
 pub mod recycle_seam {
     pub use windows::core::implement;
     pub use windows::Win32::System::Com::CLSCTX_ALL;
@@ -20,8 +24,6 @@ pub mod recycle_seam {
 
 /// Per-drive Recycle Bin policy (spec §9 pre-flight rules).
 #[derive(Debug, Clone, Copy)]
-/// Re-exports for the recycle module (doc 02 §2: recycle.rs calls
-/// windows-rs only through these).
 pub struct BinPolicy {
     /// True when Windows silently permanent-deletes (NukeOnDelete == 1).
     pub nuke_on_delete: bool,

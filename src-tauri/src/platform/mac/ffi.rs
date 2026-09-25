@@ -1,9 +1,8 @@
 //! Hand-declared FFI surface: libc/ Mach structs, extern blocks,
-//! getattrlist constants. Verbatim move from the old mac.rs.
-#![allow(clippy::upper_case_acronyms)]
-
-//! Hand-declared FFI surface: libc/ Mach structs, extern blocks,
-//! getattrlist constants. Verbatim move from the old mac.rs.
+//! getattrlist constants. Verbatim move from the old mac.rs — the
+//! struct fields are `pub(crate)` because the split submodules
+//! (dir/monitor/sysinfo/license) read them directly; in the old
+//! monolith everything shared one module scope.
 #![allow(clippy::upper_case_acronyms)]
 
 use std::ffi::{c_char, c_int, c_void};
@@ -22,20 +21,20 @@ pub(crate) type KernReturn = i32;
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Timeval {
-    tv_sec: i64,
-    tv_usec: i32,
+    pub(crate) tv_sec: i64,
+    pub(crate) tv_usec: i32,
 }
 
 /// `struct attrlist` for `getattrlist(2)`.
 #[repr(C)]
 pub(crate) struct AttrList {
-    bitmapcount: u16,
-    reserved: u16,
-    commonattr: u32,
-    volattr: u32,
-    dirattr: u32,
-    fileattr: u32,
-    forkattr: u32,
+    pub(crate) bitmapcount: u16,
+    pub(crate) reserved: u16,
+    pub(crate) commonattr: u32,
+    pub(crate) volattr: u32,
+    pub(crate) dirattr: u32,
+    pub(crate) fileattr: u32,
+    pub(crate) forkattr: u32,
 }
 
 extern "C" {
@@ -186,120 +185,120 @@ extern "C" {
 /// `struct statfs` (the published macOS layout, 64-bit).
 #[repr(C)]
 pub(crate) struct StatFs {
-    f_bsize: u32,
-    f_iosize: i32,
-    f_blocks: u64,
-    f_bfree: u64,
-    f_bavail: u64,
-    f_files: u64,
-    f_ffree: u64,
-    f_fsid: [u32; 2],
-    f_owner: u32,
-    f_type: u32,
-    f_flags: u32,
-    f_fssubtype: u32,
-    f_fstypename: [u8; 16],
-    f_mntonname: [u8; 1024],
-    f_mntfromname: [u8; 1024],
-    f_flags2: u32,
-    f_reserved: [u32; 7],
+    pub(crate) f_bsize: u32,
+    pub(crate) f_iosize: i32,
+    pub(crate) f_blocks: u64,
+    pub(crate) f_bfree: u64,
+    pub(crate) f_bavail: u64,
+    pub(crate) f_files: u64,
+    pub(crate) f_ffree: u64,
+    pub(crate) f_fsid: [u32; 2],
+    pub(crate) f_owner: u32,
+    pub(crate) f_type: u32,
+    pub(crate) f_flags: u32,
+    pub(crate) f_fssubtype: u32,
+    pub(crate) f_fstypename: [u8; 16],
+    pub(crate) f_mntonname: [u8; 1024],
+    pub(crate) f_mntfromname: [u8; 1024],
+    pub(crate) f_flags2: u32,
+    pub(crate) f_reserved: [u32; 7],
 }
 
 /// `struct ifaddrs` (published layout, 64-bit).
 #[repr(C)]
 pub(crate) struct IfAddrs {
-    ifa_next: *mut IfAddrs,
-    ifa_name: *mut c_char,
-    ifa_flags: u32,
-    ifa_addr: *mut IfSockaddr,
-    ifa_netmask: *mut IfSockaddr,
-    ifa_dstaddr: *mut IfSockaddr,
-    ifa_data: *mut c_void,
+    pub(crate) ifa_next: *mut IfAddrs,
+    pub(crate) ifa_name: *mut c_char,
+    pub(crate) ifa_flags: u32,
+    pub(crate) ifa_addr: *mut IfSockaddr,
+    pub(crate) ifa_netmask: *mut IfSockaddr,
+    pub(crate) ifa_dstaddr: *mut IfSockaddr,
+    pub(crate) ifa_data: *mut c_void,
 }
 
 /// The first 8 bytes of any `struct sockaddr_*`.
 #[repr(C)]
 pub(crate) struct IfSockaddr {
-    sa_len: u8,
-    sa_family: u8,
-    sa_data: [u8; 6],
+    pub(crate) sa_len: u8,
+    pub(crate) sa_family: u8,
+    pub(crate) sa_data: [u8; 6],
 }
 
 /// `struct if_data64` (in the AF_LINK if_data area).
 #[repr(C)]
 pub(crate) struct IfData {
-    ifi_type: u8,
-    ifi_typelen: u8,
-    ifi_physical: u8,
-    ifi_addrlen: u8,
-    ifi_hdrlen: u8,
-    ifi_recvquota: u8,
-    ifi_xmitquota: u8,
-    ifi_unused1: u8,
-    ifi_mtu: u32,
-    ifi_metric: u32,
-    ifi_baudrate: u64,
-    ifi_ipackets: u64,
-    ifi_ierrors: u64,
-    ifi_opackets: u64,
-    ifi_oerrors: u64,
-    ifi_collisions: u64,
-    ifi_ibytes: u64,
-    ifi_obytes: u64,
-    ifi_imcasts: u64,
-    ifi_omcasts: u64,
-    ifi_iqdrops: u64,
-    ifi_noproto: u64,
-    ifi_recvtiming: u32,
-    ifi_xmittiming: u32,
-    ifi_lastchange: Timeval,
+    pub(crate) ifi_type: u8,
+    pub(crate) ifi_typelen: u8,
+    pub(crate) ifi_physical: u8,
+    pub(crate) ifi_addrlen: u8,
+    pub(crate) ifi_hdrlen: u8,
+    pub(crate) ifi_recvquota: u8,
+    pub(crate) ifi_xmitquota: u8,
+    pub(crate) ifi_unused1: u8,
+    pub(crate) ifi_mtu: u32,
+    pub(crate) ifi_metric: u32,
+    pub(crate) ifi_baudrate: u64,
+    pub(crate) ifi_ipackets: u64,
+    pub(crate) ifi_ierrors: u64,
+    pub(crate) ifi_opackets: u64,
+    pub(crate) ifi_oerrors: u64,
+    pub(crate) ifi_collisions: u64,
+    pub(crate) ifi_ibytes: u64,
+    pub(crate) ifi_obytes: u64,
+    pub(crate) ifi_imcasts: u64,
+    pub(crate) ifi_omcasts: u64,
+    pub(crate) ifi_iqdrops: u64,
+    pub(crate) ifi_noproto: u64,
+    pub(crate) ifi_recvtiming: u32,
+    pub(crate) ifi_xmittiming: u32,
+    pub(crate) ifi_lastchange: Timeval,
 }
 
 /// `struct rusage_info_v2`.
 #[repr(C)]
 pub(crate) struct RusageInfoV2 {
-    ri_uuid: [u8; 16],
-    ri_user_time: u64,
-    ri_system_time: u64,
-    ri_child_user_time: u64,
-    ri_child_system_time: u64,
-    ri_pkg_idle_wkups: u64,
-    ri_energy_wkups: u64,
-    ri_wired_size: u64,
-    ri_resident_size: u64,
-    ri_phys_footprint: u64,
-    ri_proc_start_abstime: u64,
-    ri_proc_exit_abstime: u64,
-    ri_child_abstime: u64,
-    ri_resident_size_peak: u64,
-    ri_phys_footprint_peak: u64,
+    pub(crate) ri_uuid: [u8; 16],
+    pub(crate) ri_user_time: u64,
+    pub(crate) ri_system_time: u64,
+    pub(crate) ri_child_user_time: u64,
+    pub(crate) ri_child_system_time: u64,
+    pub(crate) ri_pkg_idle_wkups: u64,
+    pub(crate) ri_energy_wkups: u64,
+    pub(crate) ri_wired_size: u64,
+    pub(crate) ri_resident_size: u64,
+    pub(crate) ri_phys_footprint: u64,
+    pub(crate) ri_proc_start_abstime: u64,
+    pub(crate) ri_proc_exit_abstime: u64,
+    pub(crate) ri_child_abstime: u64,
+    pub(crate) ri_resident_size_peak: u64,
+    pub(crate) ri_phys_footprint_peak: u64,
 }
 
 /// VM stats via `host_statistics64(HOST_VM_INFO64)`.
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub(crate) struct VmStatistics64 {
-    free_count: u32,
-    active_count: u32,
-    inactive_count: u32,
-    wire_count: u32,
-    zero_fill_count: u32,
-    reactivations: u32,
-    pageins: u32,
-    pageouts: u32,
-    faults: u32,
-    cow_faults: u32,
-    lookups: u32,
-    hits: u32,
-    purges: u32,
-    purgeable_count: u32,
-    speculative_count: u32,
-    decompressions: u32,
-    compressions: u32,
-    swapins: u32,
-    swapouts: u32,
-    compressor_page_count: u32,
-    total_uncompressed_pages_in_compressor: u32,
+    pub(crate) free_count: u32,
+    pub(crate) active_count: u32,
+    pub(crate) inactive_count: u32,
+    pub(crate) wire_count: u32,
+    pub(crate) zero_fill_count: u32,
+    pub(crate) reactivations: u32,
+    pub(crate) pageins: u32,
+    pub(crate) pageouts: u32,
+    pub(crate) faults: u32,
+    pub(crate) cow_faults: u32,
+    pub(crate) lookups: u32,
+    pub(crate) hits: u32,
+    pub(crate) purges: u32,
+    pub(crate) purgeable_count: u32,
+    pub(crate) speculative_count: u32,
+    pub(crate) decompressions: u32,
+    pub(crate) compressions: u32,
+    pub(crate) swapins: u32,
+    pub(crate) swapouts: u32,
+    pub(crate) compressor_page_count: u32,
+    pub(crate) total_uncompressed_pages_in_compressor: u32,
 }
 
 pub(crate) const HOST_VM_INFO64: c_int = 4;

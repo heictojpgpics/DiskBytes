@@ -34,7 +34,11 @@
 
 // Split into cohesive submodules (worklog wave 2b): ffi is the
 // shared hand-declared surface; the glob re-exports keep the
-// `crate::platform::os::X` alias surface byte-identical.
+// `crate::platform::os::X` alias surface byte-identical. ffi/objc
+// hold only `pub(crate)` internals (never part of the os:: surface)
+// so they are NOT glob-re-exported — submodules and tests reach them
+// via `super::ffi::X` / `super::objc::X` paths. (shell.rs holds only
+// `impl MacPlatform` blocks — no items to re-export.)
 pub mod apps;
 pub mod dir;
 pub mod ffi;
@@ -46,21 +50,23 @@ pub mod sysinfo;
 
 pub use apps::*;
 pub use dir::*;
-pub use ffi::*;
 pub use license::*;
 pub use monitor::*;
-pub use objc::*;
-pub use shell::*;
 pub use sysinfo::*;
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        bin_policy_for, parse_bulk_record, AttrList, BlockLiteral, IfAddrs, MacPlatform, StatFs,
-        Timeval, ATTR_CMN_CRTIME, ATTR_CMN_ERROR, ATTR_CMN_MODTIME, ATTR_CMN_NAME,
-        ATTR_CMN_OBJTYPE, ATTR_CMN_RETURNED_ATTRS, ATTR_FILE_ALLOCSIZE, ATTR_FILE_TOTALSIZE, VDIR,
-        VLNK, VREG,
+    use diskbytes_core::platform::{KnownFolder, Platform};
+
+    use super::bin_policy_for;
+    use super::dir::parse_bulk_record;
+    use super::ffi::{
+        AttrList, IfAddrs, StatFs, Timeval, ATTR_CMN_CRTIME, ATTR_CMN_ERROR, ATTR_CMN_MODTIME,
+        ATTR_CMN_NAME, ATTR_CMN_OBJTYPE, ATTR_CMN_RETURNED_ATTRS, ATTR_FILE_ALLOCSIZE,
+        ATTR_FILE_TOTALSIZE, VDIR, VLNK, VREG,
     };
+    use super::objc::BlockLiteral;
+    use super::MacPlatform;
 
     /// The hand-declared FFI structs must match the published layouts
     /// (the spec's "declare it locally + assert size" rule).
