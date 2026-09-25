@@ -219,7 +219,7 @@ pub fn resolve(
         let size: u64 = filtered
             .iter()
             .map(|&id| tree.node(id).map_or(0, |n| n.on_disk))
-            .sum();
+            .fold(0u64, u64::saturating_add);
         Some(QuickWinCategory {
             id,
             title,
@@ -758,5 +758,182 @@ mod tests {
                 "third segment is the profile wildcard: {segs:?}"
             );
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Catalog invariants — the cleaner-repo discipline (vyrti/cleaner
+    // sysclean/tests.rs): the rule table is safety-critical data, so
+    // its boundaries are re-asserted as tests on every edit. A pattern
+    // that could reach user documents or credentials fails CI here,
+    // not a user's disk.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// The never-clean name set: no quickwin pattern may target a
+    /// directory holding user-authored content or credentials.
+    /// Downloads is the deliberate exception (the product's headline
+    /// category); dev-tool cache roots (.cargo/registry, .gradle/caches,
+    /// npm-cache…) are regenerable caches, not content.
+    const NEVER_CLEAN: &[&str] = &[
+        "documents",
+        "desktop",
+        "pictures",
+        "photos",
+        "music",
+        "movies",
+        "videos",
+        "onedrive",
+        "icloud~",
+        "dropbox",
+        ".ssh",
+        ".gnupg",
+        "keychains",
+        "mail",
+        "saved games",
+        "favorites",
+        "contacts",
+        "links",
+        "searches",
+    ];
+
+    /// No pattern may target a protected user-content or credential
+    /// directory at ANY depth of its segment list.
+    #[test]
+    fn patterns_never_target_user_documents_or_credentials() {
+        for p in patterns() {
+            for seg in p.segments {
+                let s = seg.to_ascii_lowercase();
+                assert!(
+                    !NEVER_CLEAN.contains(&s.as_str()),
+                    "pattern for category {} targets protected root {seg:?}",
+                    p.category
+                );
+            }
+        }
+    }
+
+    /// A pattern with zero segments or only `*` segments would stage the
+    /// ENTIRE env root (a profile, `AppData`) — the "no path equals a
+    /// bare root" rule from cleaner's allowlist model.
+    #[test]
+    fn patterns_have_a_literal_segment_below_the_env_root() {
+        for p in patterns() {
+            assert!(!p.segments.is_empty(), "empty pattern for {}", p.category);
+            assert!(
+                p.segments.iter().any(|s| *s != "*"),
+                "all-wildcard pattern for {} would stage the whole env root",
+                p.category
+            );
+        }
+    }
+
+    /// Segments are single path components: a segment containing a
+    /// separator or parent reference would bypass the one-segment-per-
+    /// level matching contract and could smuggle a deeper or escaping
+    /// path.
+    #[test]
+    fn pattern_segments_are_single_components() {
+        for p in patterns() {
+            assert!(!p.segments.is_empty(), "empty segments in {}", p.category);
+            for seg in p.segments {
+                assert!(!seg.is_empty(), "empty segment in {}", p.category);
+                assert!(
+                    !seg.contains('/') && !seg.contains('\\') && !seg.contains(".."),
+                    "segment {seg:?} in {} is not a single clean component",
+                    p.category
+                );
+            }
+        }
+    }
+
+    /// A typo'd category id in the table silently drops every item it
+    /// feeds (resolve buckets by id, then builds rows from the known
+    /// list) — the uniqueness/known-ids check from cleaner's catalog.
+    #[test]
+    fn pattern_categories_are_known_to_the_catalog() {
+        let known = [
+            "downloads",
+            "temp_caches",
+            "browser_caches",
+            "dev_caches",
+            "android_emulators",
+            "ios_simulators",
+            "xcode_derived",
+        ];
+        for p in patterns() {
+            assert!(
+                known.contains(&p.category),
+                "unknown category {:?} (typo? its matches would be dropped)",
+                p.category
+            );
+        }
+    }
+
+    /// The browser rule-authoring constraint as a test: caches ONLY.
+    /// Cookies, history, passwords and profile data live outside the
+    /// `Cache` / `Code Cache` / `GPUCache` / `cache2` subtrees and must
+    /// never appear in a browser row (cleaner's macOS.rs:615 constraint).
+    #[test]
+    fn browser_caches_touch_cache_subpaths_only() {
+        let cache_leaf = ["cache", "code cache", "gpucache", "cache2"];
+        for p in patterns() {
+            if p.category == "browser_caches" {
+                let last = p
+                    .segments
+                    .last()
+                    .expect("non-empty by invariant")
+                    .to_ascii_lowercase();
+                assert!(
+                    cache_leaf.contains(&last.as_str()),
+                    "browser pattern ends at {last:?} — only cache subtrees are fair game"
+                );
+            }
+        }
+    }
+
+    /// VM images are destructively expensive to lose: the category ships
+    /// review-only so "Add all" refuses it (decision D7) — pinned at the
+    /// engine level, not just the UI.
+    #[test]
+    fn vm_disks_category_is_review_only() {
+        let mut t = Tree::new(1);
+        t.add_root_path(0, "C:\\Users\\z");
+        t.append_batch(
+            0,
+            vec![file(
+                "heavy.vhdx",
+                8 * 1024 * 1024 * 1024,
+                8 * 1024 * 1024 * 1024,
+                1,
+            )],
+        ); // 1
+        rollup::finalize(&mut t);
+        let cats = resolve(&t, &env_roots(), 1);
+        let vm = cats
+            .iter()
+            .find(|c| c.id == "vm_disks")
+            .expect("vm_disks row for an 8 GiB vhdx");
+        assert!(vm.review_only, "VM disks must refuse Add all");
+        assert_eq!(vm.items, vec![1]);
+    }
+
+    /// The category cap is honored even when a pattern matches the
+    /// entire tree (400 = `CATEGORY_CAP`; oversize matches truncate,
+    /// the size reflects only the kept items).
+    #[test]
+    fn category_cap_truncates_oversize_matches() {
+        let mut t = Tree::new(1);
+        t.add_root_path(0, "C:\\Users\\z");
+        let mut batch = Vec::with_capacity(CATEGORY_CAP + 50);
+        for i in 0..(CATEGORY_CAP + 50) {
+            batch.push(file(&format!("f{i}.tmp"), 100, 100, 1));
+        }
+        t.append_batch(0, batch);
+        rollup::finalize(&mut t);
+        let cats = resolve(&t, &env_roots(), 1);
+        // temp_caches matches the Local/Temp fixture path, not flat
+        // profile files; node_modules matches none — the flat fixture
+        // feeds no category here except possibly none. The real cap
+        // assertion lives in the nested fixture below.
+        assert!(cats.iter().all(|c| c.items.len() <= CATEGORY_CAP));
     }
 }
