@@ -1,8 +1,8 @@
 //! License platform surface: app data dir, machine GUID, drive
 //! serial, CPUID brand, Keychain, hardlink identity.
 
-use super::ffi::*;
-use super::*;
+use super::dir::statfs_of;
+use super::objc::{cf_release, cf_string_to_string};
 
 // ============================================================================
 // License platform surface (the win.rs M10 section mirrored)

@@ -2,18 +2,8 @@
 //! volumes. Carries the layout tests.
 
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{
-    CloseHandle, RtlNtStatusToDosError, HANDLE, STATUS_NO_MORE_FILES,
-};
-use windows::Win32::Storage::FileSystem::{
-    CreateFileW, GetDriveTypeW, GetLogicalDriveStringsW, FILE_ATTRIBUTE_DIRECTORY,
-    FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, FILE_ATTRIBUTE_RECALL_ON_OPEN,
-    FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_LIST_DIRECTORY, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
-    SYNCHRONIZE,
-};
 
-use super::*;
+use super::wide;
 
 // ============================================================================
 // M9: Monitor raw sampling (spec §12; doc 02 §7)
@@ -321,9 +311,6 @@ fn memory_compression_ws(procs: &[(u32, String, u64, u64, u64)]) -> Option<u64> 
 /// Fixed + removable mounted volumes with labels + free space.
 fn volume_samples() -> Vec<diskbytes_core::monitor::VolumeSample> {
     use windows::Win32::Storage::FileSystem::GetDriveTypeW;
-    use windows::Win32::Storage::FileSystem::{
-        GetDiskFreeSpaceExW, GetLogicalDriveStringsW, GetVolumeInformationW,
-    };
     use windows::Win32::System::WindowsProgramming::DRIVE_FIXED;
     const DRIVE_REMOVABLE: u32 = 2; // winbase.h
     let mut buf = [0u16; 512];

@@ -1,11 +1,8 @@
 //! COM STA apartment guard for shell/recycle calls.
 
-use super::*;
-
 /// COM apartment initialization guard (recycle thread). `CoUninitialize`
 /// runs on drop EXACTLY once per successful `CoInitializeEx` (including
 /// the S_FALSE "already initialized" case — balancing is required).
-
 pub struct ComApartment {
     /// The HRESULT returned by `CoInitializeEx` (S_FALSE = already init).
     hr: windows::core::HRESULT,

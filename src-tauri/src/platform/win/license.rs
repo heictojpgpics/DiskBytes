@@ -2,11 +2,8 @@
 //! serial, CPUID brand, DPAPI protection, hardlink identity.
 
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{
-    CloseHandle, RtlNtStatusToDosError, HANDLE, STATUS_NO_MORE_FILES,
-};
 
-use super::*;
+use super::wide;
 
 // ============================================================================
 // M10: License platform surface (doc 06; licensing doc §3/§5.4)

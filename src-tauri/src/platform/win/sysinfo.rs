@@ -2,7 +2,7 @@
 
 use windows::core::PCWSTR;
 
-use super::*;
+use super::{drive_root_of, wide};
 
 pub struct StorageSnapshot {
     /// Volume label (empty when unavailable).
@@ -23,7 +23,6 @@ pub struct String16(pub Vec<u16>);
 /// (`lpFreeBytesAvailableToCaller` — spec §6.5) + volume label.
 #[must_use]
 pub fn disk_storage(display_path: &str) -> Option<StorageSnapshot> {
-    use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetVolumeInformationW};
     let root = drive_root_of(display_path)?;
     let wide_root = wide(&root);
     let mut free_caller: u64 = 0;

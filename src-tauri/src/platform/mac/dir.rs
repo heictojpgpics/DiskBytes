@@ -1,8 +1,11 @@
 //! macOS directory enumeration engine: getattrlistbulk on an
 //! O_DIRECTORY fd, record parser, volume inventory, statfs.
 
-use super::ffi::*;
-use super::*;
+use super::ffi::{
+    AttrList, StatFs, ATTR_CMN_CRTIME, ATTR_CMN_ERROR, ATTR_CMN_MODTIME, ATTR_CMN_NAME,
+    ATTR_CMN_OBJTYPE, ATTR_CMN_RETURNED_ATTRS, ATTR_FILE_ALLOCSIZE, ATTR_FILE_TOTALSIZE,
+    FSOPT_NOFOLLOW, VDIR, VLNK, VNON, VREG,
+};
 
 /// The macOS host. Registered in Tauri managed state exactly like
 /// `WindowsPlatform` (the `HostPlatform` alias resolves it).

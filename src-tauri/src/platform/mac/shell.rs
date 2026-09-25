@@ -1,7 +1,7 @@
 //! Shell integration (open/reveal/clipboard) + Trash policy.
 
-use super::ffi::*;
-use super::*;
+use super::objc::{cf_array_of, file_url, ns_string, open_config_default, workspace_shared};
+use super::MacPlatform;
 
 impl MacPlatform {
     /// Open a path with its default app (Finder for folders). The

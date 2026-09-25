@@ -1,10 +1,12 @@
 //! Raw machine sampling: CPU ticks, memory, network, processes.
 
-use super::ffi::*;
-use super::*;
+use super::dir::{is_browsable_volume, statfs_of, volume_inventory};
+use super::ffi::{
+    IfAddrs, IfData, RusageInfoV2, VmStatistics64, HOST_CPU_LOAD_INFO, HOST_VM_INFO64,
+    KERN_SUCCESS, RUSAGE_INFO_V2,
+};
 
 /// The raw monitor sample (mirrors win.rs::RawMonitor).
-
 pub struct RawMonitor {
     pub ticks: CpuTicks,
     pub threads: u32,

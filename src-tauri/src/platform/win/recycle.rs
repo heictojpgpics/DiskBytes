@@ -2,15 +2,8 @@
 //! checks. Verbatim move from `win.rs`.
 
 use windows::core::PCWSTR;
-use windows::Win32::Storage::FileSystem::{
-    CreateFileW, GetDriveTypeW, GetLogicalDriveStringsW, FILE_ATTRIBUTE_DIRECTORY,
-    FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, FILE_ATTRIBUTE_RECALL_ON_OPEN,
-    FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_LIST_DIRECTORY, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
-    SYNCHRONIZE,
-};
 
-use super::*;
+use super::wide;
 
 pub mod recycle_seam {
     pub use windows::core::implement;
@@ -28,7 +21,6 @@ pub mod recycle_seam {
 #[derive(Debug, Clone, Copy)]
 /// Re-exports for the recycle module (doc 02 §2: recycle.rs calls
 /// windows-rs only through these).
-
 pub struct BinPolicy {
     /// True when Windows silently permanent-deletes (NukeOnDelete == 1).
     pub nuke_on_delete: bool,
@@ -162,7 +154,6 @@ pub fn path_on_fixed_drive(display_path: &str) -> bool {
 /// already gone).
 #[must_use]
 pub fn path_missing(display_path: &str) -> bool {
-    use windows::Win32::Storage::FileSystem::{GetFileAttributesW, INVALID_FILE_ATTRIBUTES};
     let wide_path = wide(display_path);
     // SAFETY: NUL-terminated path.
     let attrs = unsafe { GetFileAttributesW(PCWSTR(wide_path.as_ptr())) };

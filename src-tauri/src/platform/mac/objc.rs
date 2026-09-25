@@ -1,8 +1,7 @@
 //! ObjC / CoreFoundation runtime helpers: NSString bridging, file
 //! URLs, arrays, run-loop pumping, Block1 trampoline.
 
-use super::ffi::*;
-use super::*;
+use super::MacPlatform;
 
 // ─────────────────────────────────────────────────────────────────────
 // ObjC runtime (objc2) — raw id + class lookups, toll-free CF bridging.

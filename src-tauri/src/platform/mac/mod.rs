@@ -69,7 +69,12 @@ pub use sysinfo::*;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        bin_policy_for, parse_bulk_record, AttrList, BlockLiteral, IfAddrs, MacPlatform, StatFs,
+        Timeval, ATTR_CMN_CRTIME, ATTR_CMN_ERROR, ATTR_CMN_MODTIME, ATTR_CMN_NAME,
+        ATTR_CMN_OBJTYPE, ATTR_CMN_RETURNED_ATTRS, ATTR_FILE_ALLOCSIZE, ATTR_FILE_TOTALSIZE, VDIR,
+        VLNK, VREG,
+    };
 
     /// The hand-declared FFI structs must match the published layouts
     /// (the spec's "declare it locally + assert size" rule).

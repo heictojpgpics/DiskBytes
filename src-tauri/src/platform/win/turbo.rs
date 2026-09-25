@@ -1,9 +1,6 @@
 //! MFT staging: volume geometry, raw $MFT read, SeBackupPrivilege.
 
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{
-    CloseHandle, RtlNtStatusToDosError, HANDLE, STATUS_NO_MORE_FILES,
-};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, GetDriveTypeW, GetLogicalDriveStringsW, FILE_ATTRIBUTE_DIRECTORY,
     FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, FILE_ATTRIBUTE_RECALL_ON_OPEN,
@@ -12,7 +9,7 @@ use windows::Win32::Storage::FileSystem::{
     SYNCHRONIZE,
 };
 
-use super::*;
+use super::wide;
 
 /// `AdjustTokenPrivileges` sets this last-error when the privilege was
 /// NOT assigned (it still returns TRUE — see `enable_backup_privilege`).

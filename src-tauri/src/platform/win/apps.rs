@@ -2,11 +2,8 @@
 //! UserAssist, icons, process close, uninstaller exec.
 
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{
-    CloseHandle, RtlNtStatusToDosError, HANDLE, STATUS_NO_MORE_FILES,
-};
 
-use super::*;
+use super::wide;
 
 // M8: Applications platform surface (spec §11; doc 02 §7)
 // ============================================================================

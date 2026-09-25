@@ -1,7 +1,11 @@
 //! Volume snapshot, elevation, turbo stubs (turbo is Windows-only).
 
-use super::ffi::*;
-use super::*;
+use super::dir::statfs_of;
+use super::objc::Block1;
+use super::objc::{
+    cf_array_of, cf_string_to_string, file_url, run_loop_current, run_loop_run_mode,
+    workspace_shared,
+};
 
 /// Per-volume Trash policy: Finder's Trash always works on writable
 /// local volumes (the BitBucket registry concept is Windows-only).
