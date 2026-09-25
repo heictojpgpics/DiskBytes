@@ -185,7 +185,9 @@ pub const VM_DISK_MIN: u64 = 1024 * 1024 * 1024;
 /// resolves via known folders; also `%USERPROFILE%`). `_now` is kept
 /// for API compatibility — large-media is age-agnostic by spec.
 #[must_use]
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)] // category orchestrator: pattern pass + 8 category builders; the
+                                 // grouping/ordering invariants are documented in-body (same posture
+                                 // as the app layer's commit_cleanup)
 pub fn resolve(
     tree: &Tree,
     env_roots: &std::collections::HashMap<String, String>,

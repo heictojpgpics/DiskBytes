@@ -173,12 +173,13 @@ pub struct TurboGeometry {
     pub mft_valid_data_length: u64,
 }
 
-#[allow(non_snake_case)]
+#[allow(non_snake_case)] // names mirror the win.rs surface byte-for-byte: the command layer is
+                         // platform-generic and calls os::turbo_geometry / os::turbo_read_mft
 pub fn turbo_geometry(_drive_root: &str) -> Result<(std::fs::File, TurboGeometry), String> {
     Err("The fast NTFS engine is Windows-only; the standard engine runs on macOS.".into())
 }
 
-#[allow(non_snake_case)]
+#[allow(non_snake_case)] // see turbo_geometry: the win.rs name contract
 pub fn turbo_read_mft(
     _volume: &mut std::fs::File,
     _geo: &TurboGeometry,
