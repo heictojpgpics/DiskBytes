@@ -114,7 +114,7 @@ fn sizes_strategy(max: usize) -> impl Strategy<Value = Vec<u64>> {
 // Property 1: roll-up algebra — stored totals equal independent sums.
 // ---------------------------------------------------------------------------
 
-/// Honest recursive subtree sums: (on_disk, logical, files, folders).
+/// Honest recursive subtree sums: (`on_disk`, `logical`, files, folders).
 fn sum_subtree(t: &Tree, id: u32) -> (u64, u64, u64, u64) {
     let n = t.node(id).unwrap();
     if !n.is_dir() {
@@ -343,7 +343,7 @@ proptest! {
     ) {
         let units: Vec<u16> = name.encode_utf16().collect();
         let cat = FileCategory::from_name(&units);
-        prop_assert!(u8::from(cat.as_bits()) < 9);
+        prop_assert!(cat.as_bits() < 9);
         prop_assert_eq!(FileCategory::from_name(&units), cat);
         let mut n = Node::new_file();
         n.set_category(cat);
