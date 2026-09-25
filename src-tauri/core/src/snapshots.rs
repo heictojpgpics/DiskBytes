@@ -75,7 +75,14 @@ impl Snapshot {
     /// Total logical size across stored folders.
     #[must_use]
     pub fn total(&self) -> u64 {
-        self.folders.iter().map(|f| f.logical).sum()
+        // Saturating: a corrupt or hand-edited snapshot can hold u64-scale
+        // folder sizes whose plain `.sum()` PANICS on overflow in debug
+        // builds and silently wraps in release (found by the proptest
+        // suite's snapshot-delta property).
+        self.folders
+            .iter()
+            .map(|f| f.logical)
+            .fold(0u64, u64::saturating_add)
     }
 
     /// Lower-cased path → size map for diffing (NTFS is case-insensitive).

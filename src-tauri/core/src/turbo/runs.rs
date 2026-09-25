@@ -66,6 +66,14 @@ pub fn decode_run_list(
         }
         // Length: unsigned LE.
         let length = read_le_u64(bytes, &mut cursor, length_width).ok_or(RunError::Overrun)?;
+        // A real run list never contains a zero-length run (the format
+        // has no such encoding) — a 0 here means corrupt bytes, and
+        // emitting it downstream (a length-0 "extent") would violate
+        // every consumer's length>0 expectation. Skip the run, keep the
+        // walk alive (found by the proptest suite's 512-case fuzz).
+        if length == 0 {
+            continue;
+        }
         // Offset: signed LE with sign extension.
         let (offset, has_offset) =
             read_le_i64_signed(bytes, &mut cursor, offset_width).ok_or(RunError::Overrun)?;
@@ -93,12 +101,17 @@ pub fn decode_run_list(
         });
     }
     if remaining > 0 {
-        // Trailing hole = sparse tail.
-        out.push(RunEntry {
-            length: u64::try_from(remaining).unwrap_or(0),
-            lcn: None,
-            first_vcn,
-        });
+        // Trailing hole = sparse tail. A span that does not fit u64
+        // (corrupt first/last VCN pair — e.g. 0..u64::MAX) used to push
+        // a PHANTOM length-0 run via `unwrap_or(0)`; skip the tail
+        // instead (the run list simply does not cover the claim).
+        if let Ok(len) = u64::try_from(remaining) {
+            out.push(RunEntry {
+                length: len,
+                lcn: None,
+                first_vcn,
+            });
+        }
     }
     Ok(out)
 }

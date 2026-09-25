@@ -130,6 +130,16 @@ fn layout_children(
         .map(|&id| tree.node(id).map_or(0, |n| n.on_disk))
         .collect();
     let rects = squarify(&sizes, rect);
+    // Squarify can DROP tail siblings when the remaining rect's f32
+    // extent collapses to zero (a multi-GB sibling's row rounds to the
+    // full extent; the next row's zero thickness yields an INF
+    // worst-ratio and the walk stops). The dropped cells are genuinely
+    // invisible, but the drop must not be silent — `truncated` is the
+    // UI's only "not everything is drawn" signal (found by the proptest
+    // area-proportionality property: 2 sizes, 1 cell, truncated=false).
+    if rects.len() < ids.len() {
+        *truncated = true;
+    }
     let depth_here = depth_below(tree, parent, layout_root) + 1;
     for (i, (&id, r)) in ids.iter().zip(rects.iter()).enumerate() {
         if cells.len() >= MAX_CELLS {
@@ -200,9 +210,17 @@ fn layout_children(
                     body.w,
                     body.h,
                 ));
+            } else {
+                // Sub-visible body dropped: flag it — never silent.
+                *truncated = true;
             }
         } else if rect_visible(r.w, r.h) {
             cells.push(Cell::rect(id, depth_here as u16, rgba, r.x, r.y, r.w, r.h));
+        } else {
+            // Sub-visible file dropped: flag it — never silent (the
+            // proptest area property caught this second drop path:
+            // squarify emitted the rect, the visibility gate ate it).
+            *truncated = true;
         }
     }
 }
@@ -211,7 +229,11 @@ fn layout_children(
 /// descending (`children_sorted` guarantees that); zero sizes are skipped by
 /// callers. Output rects match input order.
 fn squarify(sizes: &[u64], rect: Rect) -> Vec<Rect> {
-    let total: u64 = sizes.iter().sum();
+    // Saturating total: a tree of sizes summing past u64::MAX (2 EB)
+    // would panic in debug and wrap in release, corrupting every
+    // proportion (found by the proptest area property with near-MAX
+    // sizes; rollup is already saturating — this matches it).
+    let total: u64 = sizes.iter().copied().fold(0u64, u64::saturating_add);
     let mut out = Vec::with_capacity(sizes.len());
     if total == 0 || rect.w <= 0.0 || rect.h <= 0.0 || sizes.is_empty() {
         return out;
