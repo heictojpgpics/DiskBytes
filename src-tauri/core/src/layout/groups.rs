@@ -50,7 +50,7 @@ const FLAME_MIN_W: f32 = 1.0;
 /// Flame horizontal gap (matches the real-tree engine).
 const FLAME_GAP_X: f32 = 0.5;
 /// Regrouped flame row count (groups + members).
-const FLAME_ROWS: u16 = 2;
+const FLAME_ROWS: u16 = 3;
 /// Bubbles padding between a parent rim and its content (engine parity).
 const BUB_PAD: f32 = 3.0;
 /// Bubbles gap between sibling circles (engine parity).
@@ -105,7 +105,9 @@ pub fn sunburst_groups(
         r_center,
     ));
     if total > 0 && ring_w > 0.5 {
-        let usable = std::f32::consts::TAU - SUN_ARC_GAP * groups.len().min(64) as f32;
+        // Spill-free gap accounting: every group can emit an arc, so the
+        // budget covers all of them (see the sunburst engine's fix note).
+        let usable = (std::f32::consts::TAU - SUN_ARC_GAP * groups.len() as f32).max(0.0);
         let mut cursor = 0.0f32;
         for g in groups {
             if over_budget(&cells, &mut truncated) {
@@ -131,7 +133,7 @@ pub fn sunburst_groups(
             let m_total: u64 = g.4.iter().map(|m| m.1).sum();
             if m_total > 0 {
                 let r1 = r_center + SUN_RING_GAP * 2.0 + ring_w;
-                let m_usable = arc - SUN_ARC_GAP * g.4.len().min(64) as f32;
+                let m_usable = (arc - SUN_ARC_GAP * g.4.len() as f32).max(0.0);
                 let mut m_cursor = a0;
                 for (mid, msize) in &g.4 {
                     if over_budget(&cells, &mut truncated) {
@@ -191,6 +193,9 @@ pub fn flame_groups(
 ) -> Result<LayoutBuffer, CoreError> {
     checked(width, height)?;
     let total: u64 = groups.iter().map(|g| g.2).sum();
+    // Three visual rows: root (0), group spans (1), member blocks (2).
+    // This used to divide by 2, placing every member rect at
+    // y = row_h * 2.0 = height — fully below the canvas.
     let row_h = height / f32::from(FLAME_ROWS);
     let mut cells: Vec<Cell> = Vec::with_capacity(512);
     let mut truncated = false;
@@ -579,16 +584,37 @@ mod tests {
         let r = by_type(&t, 0, 100);
         let buf = flame_groups(&r.groups, 600.0, 300.0, 1, 0, ColorMode::ByType).unwrap();
         assert_eq!(buf.meta.mode, "flame");
-        // Root block row 0 full width; group blocks on row 1 (y == 150).
+        // Three rows: root y=0, groups y=100, members y=200 (row_h = 300/3).
+        // (The old 2-row math put members at y = 300 = height, fully
+        // off-canvas — every member block was invisible.)
         let root = buf.cells.iter().find(|c| c.depth == 0).unwrap();
         assert!((root.g[2] - 600.0).abs() < 0.01);
+        assert!((root.g[1] - 0.0).abs() < 0.01);
         let groups: Vec<&Cell> = buf.cells.iter().filter(|c| c.depth == 1).collect();
         assert_eq!(groups.len(), 3);
-        assert!(groups.iter().all(|c| (c.g[1] - 150.0).abs() < 0.01));
+        assert!(groups.iter().all(|c| (c.g[1] - 100.0).abs() < 0.01));
         // Widths ∝ sizes: 120 / 50 / 30 of 200 → ~300/125/75 px (minus gaps).
         let w0 = groups.iter().map(|c| c.g[2]).fold(0.0f32, f32::max);
         let w_min = groups.iter().map(|c| c.g[2]).fold(f32::MAX, f32::min);
         assert!(w0 / w_min > 3.9, "{w0} vs {w_min}");
+        // THE missing property: every cell of every row fits INSIDE the
+        // canvas — member blocks live on row 2 (y=200, height 100).
+        let members: Vec<&Cell> = buf.cells.iter().filter(|c| c.depth == 2).collect();
+        assert!(!members.is_empty(), "member cells must be emitted");
+        for c in &buf.cells {
+            assert!(c.g[0] >= -0.01, "x below canvas: {}", c.g[0]);
+            assert!(c.g[0] + c.g[2] <= 600.0 + 0.01, "x beyond canvas");
+            assert!(c.g[1] >= -0.01, "y below canvas: {}", c.g[1]);
+            assert!(
+                c.g[1] + c.g[3] <= 300.0 + 0.01,
+                "y beyond canvas: {}",
+                c.g[1] + c.g[3]
+            );
+        }
+        assert!(
+            members.iter().all(|c| (c.g[1] - 200.0).abs() < 0.01),
+            "members on row 2"
+        );
     }
 
     #[test]

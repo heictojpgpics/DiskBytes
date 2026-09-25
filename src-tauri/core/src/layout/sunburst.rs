@@ -126,7 +126,20 @@ fn layout_ring(
         return;
     }
     let mut cursor = start_angle;
-    let usable = span - ARC_GAP * children.len().min(64) as f32;
+    // Gap budget must cover every child that can emit a cell — the old
+    // `.min(64)` cap subtracted at most 64 gaps while the emit loop adds
+    // one gap per KEPT member, so folders with >64 visible children
+    // spilled arcs into the neighboring sector (at 1000 siblings ≈ 45%
+    // of the circle). Kept ⊆ visible, so subtracting for all visible
+    // children is the spill-free bound.
+    let visible = children
+        .iter()
+        .filter(|&&id| {
+            tree.node(id)
+                .is_some_and(|c| c.on_disk > 0 && !c.is_removed())
+        })
+        .count();
+    let usable = (span - ARC_GAP * visible as f32).max(0.0);
     let gap = ARC_GAP;
     for (i, &id) in children.iter().enumerate() {
         if cells.len() >= MAX_CELLS {
@@ -321,5 +334,76 @@ mod tests {
             distinct(3) >= 3,
             "descendant arcs must inherit their branch families"
         );
+    }
+
+    /// Regression: the gap budget used to subtract at most 64 gaps
+    /// (`.min(64)`) while the emit loop adds one gap per KEPT member —
+    /// folders with >64 visible children spilled arcs into the
+    /// neighboring sector. A 500-sibling folder must stay inside its
+    /// sector: last arc end + gap <= TAU.
+    #[test]
+    fn many_siblings_do_not_spill_past_tau() {
+        let mut t = Tree::new(1);
+        t.add_root_path(0, "C:\\wide");
+        let entries: Vec<BatchEntry> = (0..500u32)
+            .map(|i| {
+                file(
+                    &format!("f{i:03}.bin"),
+                    100 + u64::from(i),
+                    100 + u64::from(i),
+                    1,
+                )
+            })
+            .collect();
+        t.append_batch(0, entries);
+        rollup::finalize(&mut t);
+        let buf = sunburst(&t, 0, 800.0, 800.0, 3, ColorMode::ByFolder, 1).unwrap();
+        let ring1: Vec<&Cell> = buf
+            .cells
+            .iter()
+            .filter(|c| c.flags == crate::layout::cell_kind::ARC && c.depth == 1)
+            .collect();
+        assert!(ring1.len() > 64, "fixture must exceed the old 64 cap");
+        // No arc may cross TAU (the ring's end) — the spill signature.
+        for c in &ring1 {
+            assert!(
+                c.g[1] <= std::f32::consts::TAU + 0.001,
+                "arc spills past TAU: end {}",
+                c.g[1]
+            );
+        }
+        // And the total consumed span (arcs + gaps) must not exceed TAU.
+        let last_end = ring1.iter().map(|c| c.g[1]).fold(f32::MIN, f32::max);
+        assert!(
+            last_end + ARC_GAP <= std::f32::consts::TAU + 0.001,
+            "ring consumes past TAU: {last_end}"
+        );
+    }
+
+    /// The degenerate sibling of the spill test: when the gap budget
+    /// alone exceeds the sector (thousands of siblings), the engine must
+    /// degrade to emitting nothing for that ring — never overflow.
+    #[test]
+    fn degenerate_many_siblings_emits_nothing_not_garbage() {
+        let mut t = Tree::new(1);
+        t.add_root_path(0, "C:\\huge");
+        let entries: Vec<BatchEntry> = (0..3000u32)
+            .map(|i| file(&format!("f{i:04}.bin"), 10, 10, 1))
+            .collect();
+        t.append_batch(0, entries);
+        rollup::finalize(&mut t);
+        let buf = sunburst(&t, 0, 800.0, 800.0, 3, ColorMode::ByFolder, 1).unwrap();
+        let ring1: Vec<&Cell> = buf
+            .cells
+            .iter()
+            .filter(|c| c.flags == crate::layout::cell_kind::ARC && c.depth == 1)
+            .collect();
+        for c in &ring1 {
+            assert!(
+                c.g[1] <= std::f32::consts::TAU + 0.001,
+                "arc spills past TAU: end {}",
+                c.g[1]
+            );
+        }
     }
 }

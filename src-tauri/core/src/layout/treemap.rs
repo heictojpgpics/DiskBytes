@@ -237,7 +237,12 @@ fn squarify(sizes: &[u64], rect: Rect) -> Vec<Rect> {
                 break;
             }
             let next_w = row_weight + cw;
-            let sq = 0.0 + (next_w * next_w) as f64;
+            // Square in f64 — the u64 form (`next_w * next_w`) overflows
+            // above ~4.29 GiB of cumulative row weight, i.e. on every real
+            // disk's root rows (debug: panic, release: garbage ratios that
+            // quietly wreck squarification quality).
+            let next_w_f = next_w as f64;
+            let sq = next_w_f * next_w_f;
             let thickness_sq = thickness * thickness;
             let next_worst =
                 (thickness_sq * wpp * largest as f64 / sq).max(sq / thickness_sq / wpp / cw as f64);
@@ -705,5 +710,64 @@ mod tests {
             distinct(3) >= 3,
             "descendants must inherit their branch families"
         );
+    }
+
+    /// Regression: cumulative row weights are BYTES — the old
+    /// `(next_w * next_w) as f64` squared in u64 first, which overflows
+    /// above `sqrt(u64::MAX)` ≈ 4.29 GiB. Every real-world disk's root rows
+    /// (e.g. a 60 GB row) hit this: debug builds panicked, release builds
+    /// produced garbage worst-ratios that quietly wrecked layout quality.
+    #[test]
+    fn squarify_gigabyte_weights_no_u64_overflow() {
+        let sizes = vec![
+            60_000_000_000u64, // 60 GB
+            40_000_000_000,    // 40 GB
+            25_000_000_000,    // 25 GB
+            12_000_000_000,    // 12 GB
+            8_000_000_000,     // 8 GB — cumulative 145 GB, far past the
+                               // 4.29 GiB u64-square overflow point
+        ];
+        let rects = squarify(
+            &sizes,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 1600.0,
+                h: 1000.0,
+            },
+        );
+        assert_eq!(rects.len(), sizes.len());
+        let total: u64 = sizes.iter().sum();
+        // Areas stay proportional (within rounding) — with the overflow,
+        // ratios exploded and the assertions below fail or panic.
+        for (i, r) in rects.iter().enumerate() {
+            let expected = sizes[i] as f64 / total as f64 * (1600.0 * 1000.0);
+            let area = f64::from(r.w) * f64::from(r.h);
+            assert!(
+                (area - expected).abs() < 600.0,
+                "rect {i} area {area} vs expected {expected}"
+            );
+            assert!(r.x >= -0.01 && r.y >= -0.01);
+            assert!(r.x + r.w <= 1600.01 && r.y + r.h <= 1000.01);
+        }
+    }
+
+    /// Companion: the row-growth decision itself must not overflow — a
+    /// single file above 4 GiB alone exceeds the old u64 square.
+    #[test]
+    fn squarify_single_file_above_4gib() {
+        let sizes = vec![5_500_000_000u64]; // > sqrt(u64::MAX)
+        let rects = squarify(
+            &sizes,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 800.0,
+                h: 600.0,
+            },
+        );
+        assert_eq!(rects.len(), 1);
+        let r = rects[0];
+        assert!((r.w - 800.0).abs() < 0.01 && (r.h - 600.0).abs() < 0.01);
     }
 }
