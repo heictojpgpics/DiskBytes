@@ -12,7 +12,7 @@
 use crate::error::CoreError;
 use crate::layout::{
     check_geometry, depth_below, effective_branch_root, node_color, pack_rgba, rect_visible, Cell,
-    ColorMode, GroupDesc, GroupTuple, LayoutBuffer, LayoutMeta, MAX_CELLS,
+    ColorMode, GroupDesc, GroupTuple, LayoutBuffer, LayoutMeta,
 };
 use crate::scan::node::Tree;
 
@@ -118,13 +118,8 @@ fn layout_children(
     if depth_left == 0 || !rect_visible(rect.w, rect.h) {
         return;
     }
-    let children = tree.children_sorted(parent).to_vec();
     // Sizes for the squarify pass: skip zero-size children (degenerate).
-    let ids: Vec<u32> = children
-        .iter()
-        .copied()
-        .filter(|&id| tree.node(id).map_or(0, |n| n.on_disk) > 0)
-        .collect();
+    let (ids, _total) = crate::layout::sizeable_children(tree, parent);
     let sizes: Vec<u64> = ids
         .iter()
         .map(|&id| tree.node(id).map_or(0, |n| n.on_disk))
@@ -142,8 +137,7 @@ fn layout_children(
     }
     let depth_here = depth_below(tree, parent, layout_root) + 1;
     for (i, (&id, r)) in ids.iter().zip(rects.iter()).enumerate() {
-        if cells.len() >= MAX_CELLS {
-            *truncated = true;
+        if crate::layout::over_budget(cells, truncated) {
             return;
         }
         let node = tree.node(id).expect("id from children slice");
@@ -152,7 +146,7 @@ fn layout_children(
         }
         // One pastel family per effective top-level branch, inherited by
         // every descendant (shade still varies by depth + sibling index).
-        let fam = if parent == branch_root { i } else { family };
+        let fam = crate::layout::family_of(parent, branch_root, i, family);
         let rgba = pack_rgba(match color {
             ColorMode::ByFolder => node_color(tree, id, color, now, fam, depth_here as u16, i),
             ColorMode::ByType => node.category().color(),
@@ -384,7 +378,7 @@ pub fn treemap_groups(
                 w: r.w,
                 h: r.h - HEADER_H,
             };
-            layout_group_members(*id, members, body, rgba, &mut cells, &mut truncated);
+            layout_group_members(members, body, rgba, &mut cells, &mut truncated);
         } else if rect_visible(r.w, r.h) {
             cells.push(Cell::rect(*id, 1, rgba, r.x, r.y, r.w, r.h));
         }
@@ -410,7 +404,6 @@ pub fn treemap_groups(
 
 /// Squarify member files inside a group body.
 fn layout_group_members(
-    group_id: u32,
     members: &[(u32, u64)],
     body: Rect,
     group_rgba: u32,
@@ -420,15 +413,13 @@ fn layout_group_members(
     let sizes: Vec<u64> = members.iter().map(|m| m.1).collect();
     let rects = squarify(&sizes, body);
     for ((mid, _), r) in members.iter().zip(rects.iter()) {
-        if cells.len() >= MAX_CELLS {
-            *truncated = true;
+        if crate::layout::over_budget(cells, truncated) {
             return;
         }
         if rect_visible(r.w, r.h) {
             cells.push(Cell::rect(*mid, 2, group_rgba, r.x, r.y, r.w, r.h));
         }
     }
-    let _ = group_id;
 }
 
 #[cfg(test)]
@@ -583,7 +574,7 @@ mod tests {
         let t = build_tree();
         let buf = treemap(&t, 0, 1200.0, 800.0, 4, ColorMode::ByFolder, 100).unwrap();
         assert!(!buf.cells.is_empty());
-        assert!(buf.cells.len() <= MAX_CELLS);
+        assert!(buf.cells.len() <= crate::layout::MAX_CELLS);
         // All cells in bounds.
         for c in &buf.cells {
             if c.flags == crate::layout::cell_kind::RECT

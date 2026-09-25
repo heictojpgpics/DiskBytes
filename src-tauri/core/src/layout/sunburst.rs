@@ -8,18 +8,18 @@
 use crate::error::CoreError;
 use crate::layout::{
     check_geometry, effective_branch_root, node_color, pack_rgba, Cell, ColorMode, LayoutBuffer,
-    LayoutMeta, MAX_CELLS,
+    LayoutMeta,
 };
 use crate::scan::node::Tree;
 
 /// Center disc radius fraction of the smaller viewport side (reference:
 /// a larger coral center disc; the folder label is drawn JS-side).
-const CENTER_R_FRACTION: f32 = 0.16;
+pub(crate) const CENTER_R_FRACTION: f32 = 0.16;
 /// Minimum arc span (radians) to emit a cell.
-const MIN_ARC: f32 = 0.004;
+pub(crate) const MIN_ARC: f32 = 0.004;
 /// Gap between rings and between sibling arcs (visual separation).
-const RING_GAP: f32 = 1.5;
-const ARC_GAP: f32 = 0.003;
+pub(crate) const RING_GAP: f32 = 1.5;
+pub(crate) const ARC_GAP: f32 = 0.003;
 
 /// Layout the subtree under `node` as a sunburst.
 ///
@@ -142,8 +142,7 @@ fn layout_ring(
     let usable = (span - ARC_GAP * visible as f32).max(0.0);
     let gap = ARC_GAP;
     for (i, &id) in children.iter().enumerate() {
-        if cells.len() >= MAX_CELLS {
-            *truncated = true;
+        if crate::layout::over_budget(cells, truncated) {
             return;
         }
         let c = tree.node(id).expect("child id");
@@ -158,7 +157,7 @@ fn layout_ring(
         let a1 = cursor + arc;
         // One pastel family per effective top-level branch, inherited by
         // every descendant (shade still varies by depth + sibling index).
-        let fam = if node == branch_root { i } else { top_index };
+        let fam = crate::layout::family_of(node, branch_root, i, top_index);
         let rgba = pack_rgba(match color {
             ColorMode::ByFolder => node_color(tree, id, color, now, fam, depth_here as u16, i),
             ColorMode::ByType => c.category().color(),

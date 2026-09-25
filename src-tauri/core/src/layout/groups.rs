@@ -11,10 +11,9 @@
 //! Sizing law per mode matches its engine: arc ∝ size (sunburst), width ∝
 //! size (flame), area ∝ size (bubbles), dot area ∝ share (mind map).
 
+use super::{check_geometry, Cell, ColorMode, GroupDesc, GroupTuple, LayoutBuffer, LayoutMeta};
 use crate::error::CoreError;
-use crate::layout::{
-    check_geometry, Cell, ColorMode, GroupDesc, GroupTuple, LayoutBuffer, LayoutMeta, MAX_CELLS,
-};
+use crate::layout::over_budget;
 
 /// Emit the group legend shared by every variant.
 fn group_descs(groups: &[GroupTuple]) -> Vec<GroupDesc> {
@@ -35,41 +34,58 @@ fn checked(width: f32, height: f32) -> Result<(), CoreError> {
     check_geometry(width, height)
 }
 
-/// Sunburst center disc radius fraction (matches the real-tree engine).
-const SUN_CENTER_R_FRACTION: f32 = 0.12;
-/// Sunburst ring gap (matches the real-tree engine).
-const SUN_RING_GAP: f32 = 1.5;
-/// Sunburst arc gap (matches the real-tree engine).
-const SUN_ARC_GAP: f32 = 0.003;
-/// Minimum sunburst arc span (matches the real-tree engine).
-const SUN_MIN_ARC: f32 = 0.004;
+// Engine-parity constants: IMPORTED from the engines they mirror so
+// parity is structural, not aspirational. These used to be re-declared
+// with "matches the real-tree engine" comments that had already
+// silently drifted — the sunburst center fraction (0.12 vs the
+// engine's 0.16 after the coral-center enlargement) and the mind-map
+// root dot (hardcoded 12 vs ROOT_DOT_R's 14, which the JS label gate
+// r >= 13 depends on to even name the root).
+/// Bubbles gap between sibling circles (engine parity).
+use crate::layout::bubbles::GAP as BUB_GAP;
+/// Bubbles minimum radius (engine parity).
+use crate::layout::bubbles::MIN_R as BUB_MIN_R;
+/// Bubbles padding between a parent rim and its content (engine parity).
+use crate::layout::bubbles::PAD as BUB_PAD;
+/// Flame horizontal gap (engine parity).
+use crate::layout::flame::GAP_X as FLAME_GAP_X;
+/// Flame minimum block width (engine parity).
+use crate::layout::flame::MIN_W as FLAME_MIN_W;
+/// Mind Map group dot base scale (engine parity).
+use crate::layout::mindmap::DOT_BASE as MIND_GROUP_DOT;
+/// Mind Map minimum dot radius (engine parity).
+use crate::layout::mindmap::MIN_R as MIND_MIN_R;
+/// Mind Map root hub dot radius (engine parity — 14px clears the JS
+/// label gate at r >= 13 so the regrouped root is named, like the
+/// real-tree engine's).
+use crate::layout::mindmap::ROOT_DOT_R;
+/// Sunburst arc gap (engine parity).
+use crate::layout::sunburst::ARC_GAP as SUN_ARC_GAP;
+/// Sunburst center disc radius fraction (engine: [`crate::layout::sunburst`]).
+use crate::layout::sunburst::CENTER_R_FRACTION as SUN_CENTER_R_FRACTION;
+/// Minimum sunburst arc span (engine parity).
+use crate::layout::sunburst::MIN_ARC as SUN_MIN_ARC;
+/// Sunburst ring gap (engine parity).
+use crate::layout::sunburst::RING_GAP as SUN_RING_GAP;
+/// Parity proofs: the groups twins import the engine constants, so a
+/// future engine change that forgets the twin breaks COMPILE here (the
+/// old re-declared "matches" comments drifted silently for months).
+const _: () = assert!(SUN_CENTER_R_FRACTION == crate::layout::sunburst::CENTER_R_FRACTION);
+const _: () = assert!(SUN_RING_GAP == crate::layout::sunburst::RING_GAP);
+const _: () = assert!(SUN_ARC_GAP == crate::layout::sunburst::ARC_GAP);
+const _: () = assert!(SUN_MIN_ARC == crate::layout::sunburst::MIN_ARC);
+const _: () = assert!(FLAME_MIN_W == crate::layout::flame::MIN_W);
+const _: () = assert!(FLAME_GAP_X == crate::layout::flame::GAP_X);
+const _: () = assert!(BUB_PAD == crate::layout::bubbles::PAD);
+const _: () = assert!(BUB_GAP == crate::layout::bubbles::GAP);
+const _: () = assert!(BUB_MIN_R == crate::layout::bubbles::MIN_R);
+const _: () = assert!(MIND_MIN_R == crate::layout::mindmap::MIN_R);
+const _: () = assert!(MIND_GROUP_DOT == crate::layout::mindmap::DOT_BASE);
+
 /// Regrouped sunburst ring count (groups + members).
 const SUN_DEPTH_RINGS: u16 = 2;
-/// Flame minimum block width (matches the real-tree engine).
-const FLAME_MIN_W: f32 = 1.0;
-/// Flame horizontal gap (matches the real-tree engine).
-const FLAME_GAP_X: f32 = 0.5;
-/// Regrouped flame row count (groups + members).
+/// Regrouped flame row count (root + groups + members).
 const FLAME_ROWS: u16 = 3;
-/// Bubbles padding between a parent rim and its content (engine parity).
-const BUB_PAD: f32 = 3.0;
-/// Bubbles gap between sibling circles (engine parity).
-const BUB_GAP: f32 = 2.0;
-/// Bubbles minimum radius (engine parity).
-const BUB_MIN_R: f32 = 1.0;
-/// Mind Map minimum dot radius (engine parity).
-const MIND_MIN_R: f32 = 1.5;
-/// Mind Map group dot base scale (engine parity).
-const MIND_GROUP_DOT: f32 = 26.0;
-
-/// Budget check shared by the emit loops.
-fn over_budget(cells: &[Cell], truncated: &mut bool) -> bool {
-    if cells.len() >= MAX_CELLS {
-        *truncated = true;
-        return true;
-    }
-    false
-}
 
 /// Sunburst, regrouped: groups on the first ring, member files on the
 /// second. Arc length ∝ group size, member arcs ∝ file size within the
@@ -99,7 +115,7 @@ pub fn sunburst_groups(
     cells.push(Cell::circle(
         node,
         0,
-        crate::layout::pack_rgba(0x8E8E93),
+        crate::layout::pack_rgba(crate::layout::ANCHOR_GRAY),
         cx,
         cy,
         r_center,
@@ -177,6 +193,65 @@ pub fn sunburst_groups(
     })
 }
 
+/// One kept flame group: (id, raw width, color, member slices).
+type KeptGroup<'a> = (u32, f32, u32, &'a [(u32, u64)]);
+
+/// Member blocks of one flame-group span on row 2, picket-fence gaps
+/// (engine parity with `flame::layout_row`'s member handling).
+fn flame_group_members(
+    members: &[(u32, u64)],
+    w: f32,
+    cursor: f32,
+    row_h: f32,
+    rgba: u32,
+    cells: &mut Vec<Cell>,
+    truncated: &mut bool,
+) {
+    let m_total: u64 = members.iter().map(|m| m.1).sum();
+    if m_total == 0 {
+        return;
+    }
+    let m_kept: Vec<(u32, f32)> = members
+        .iter()
+        .filter_map(|(mid, msize)| {
+            let mw = *msize as f32 / m_total as f32 * w;
+            (mw >= FLAME_MIN_W).then_some((*mid, mw))
+        })
+        .collect();
+    let m_gaps: Vec<f32> = m_kept
+        .windows(2)
+        .map(|p| {
+            if p[0].1 >= crate::layout::flame::GAP_MIN_W
+                && p[1].1 >= crate::layout::flame::GAP_MIN_W
+            {
+                FLAME_GAP_X
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    let m_gap_total: f32 = m_gaps.iter().sum();
+    let m_kept_total: f32 = m_kept.iter().map(|k| k.1).sum();
+    let m_usable = (w - m_gap_total).max(0.0);
+    let m_scale = if m_kept_total > 0.0 {
+        m_usable / m_kept_total
+    } else {
+        0.0
+    };
+    let mut m_cursor = cursor;
+    for (mslot, &(mid, mw_raw)) in m_kept.iter().enumerate() {
+        if over_budget(cells, truncated) {
+            break;
+        }
+        let mw = mw_raw * m_scale;
+        if mw < FLAME_MIN_W {
+            continue;
+        }
+        cells.push(Cell::rect(mid, 2, rgba, m_cursor, row_h * 2.0, mw, row_h));
+        m_cursor += mw + m_gaps.get(mslot).copied().unwrap_or(0.0);
+    }
+}
+
 /// Flame, regrouped: groups on row 1 (width ∝ group size), member files on
 /// row 2 under their group's span.
 ///
@@ -203,42 +278,61 @@ pub fn flame_groups(
     cells.push(Cell::rect(
         node,
         0,
-        crate::layout::pack_rgba(0x8E8E93),
+        crate::layout::pack_rgba(crate::layout::ANCHOR_GRAY),
         0.0,
         0.0,
         width,
         row_h,
     ));
     if total > 0 {
-        let usable = (width - FLAME_GAP_X * groups.len() as f32).max(0.0);
+        // Picket-fence gaps (engine parity with `flame::layout_row`): a
+        // gap is charged only BETWEEN adjacent blocks that are both
+        // >= GAP_MIN_W wide — thin blocks render flush instead of
+        // striped by half-pixel gutters, and with many groups the old
+        // unconditional per-pair gap burned real span. Ratios among
+        // drawn blocks stay exact through the rescale.
+        let kept: Vec<KeptGroup> = groups
+            .iter()
+            .filter(|g| g.2 > 0)
+            .filter_map(|g| {
+                let w = g.2 as f32 / total as f32 * width;
+                (w >= FLAME_MIN_W).then_some((g.0, w, g.3, g.4.as_slice()))
+            })
+            .collect();
+        let gaps: Vec<f32> = kept
+            .windows(2)
+            .map(|p| {
+                if p[0].1 >= crate::layout::flame::GAP_MIN_W
+                    && p[1].1 >= crate::layout::flame::GAP_MIN_W
+                {
+                    FLAME_GAP_X
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let gap_total: f32 = gaps.iter().sum();
+        let kept_total: f32 = kept.iter().map(|k| k.1).sum();
+        let usable = (width - gap_total).max(0.0);
+        let scale = if kept_total > 0.0 {
+            usable / kept_total
+        } else {
+            0.0
+        };
         let mut cursor = 0.0f32;
-        for g in groups {
+        for (slot, &(gid, w_raw, gcolor, gmembers)) in kept.iter().enumerate() {
             if over_budget(&cells, &mut truncated) {
                 break;
             }
-            let w = g.2 as f32 / total as f32 * usable;
+            let w = w_raw * scale;
             if w < FLAME_MIN_W {
-                continue;
+                continue; // Rounding edge after rescale.
             }
-            let rgba = crate::layout::pack_rgba(g.3);
-            cells.push(Cell::rect(g.0, 1, rgba, cursor, row_h, w, row_h));
-            // Members under the group span on row 2.
-            let m_total: u64 = g.4.iter().map(|m| m.1).sum();
-            if m_total > 0 {
-                let m_usable = (w - FLAME_GAP_X * g.4.len() as f32).max(0.0);
-                let mut m_cursor = cursor;
-                for (mid, msize) in &g.4 {
-                    if over_budget(&cells, &mut truncated) {
-                        break;
-                    }
-                    let mw = *msize as f32 / m_total as f32 * m_usable;
-                    if mw >= FLAME_MIN_W {
-                        cells.push(Cell::rect(*mid, 2, rgba, m_cursor, row_h * 2.0, mw, row_h));
-                    }
-                    m_cursor += mw + FLAME_GAP_X;
-                }
-            }
-            cursor += w + FLAME_GAP_X;
+            let rgba = crate::layout::pack_rgba(gcolor);
+            cells.push(Cell::rect(gid, 1, rgba, cursor, row_h, w, row_h));
+            // Members under the group span on row 2 (same fence rule).
+            flame_group_members(gmembers, w, cursor, row_h, rgba, &mut cells, &mut truncated);
+            cursor += w + gaps.get(slot).copied().unwrap_or(0.0);
         }
     }
     Ok(LayoutBuffer {
@@ -288,7 +382,7 @@ pub fn bubbles_groups(
     cells.push(Cell::circle(
         node,
         0,
-        crate::layout::pack_rgba(0x8E8E93),
+        crate::layout::pack_rgba(crate::layout::ANCHOR_GRAY),
         cx,
         cy,
         root_r,
@@ -459,10 +553,10 @@ pub fn mindmap_groups(
     cells.push(Cell::dot(
         node,
         0,
-        crate::layout::pack_rgba(0x8E8E93),
+        crate::layout::pack_rgba(crate::layout::ANCHOR_GRAY),
         cx,
         cy,
-        12.0,
+        ROOT_DOT_R, // 14px: clears the JS label gate (r >= 13) — the old hardcoded 12 left the regrouped root unnamed.
         cx,
         cy,
     ));
@@ -649,6 +743,26 @@ mod tests {
             .iter()
             .all(|g| g.g[3].to_bits() == 400.0f32.to_bits()
                 && g.g[4].to_bits() == 300.0f32.to_bits()));
+    }
+
+    /// The regrouped mind-map root hub must clear the JS label gate
+    /// (r >= 13) exactly like the real-tree engine — the old hardcoded
+    /// 12.0 left the regrouped root an unnamed gray blob.
+    #[test]
+    fn mindmap_groups_root_dot_clears_label_gate() {
+        let t = build();
+        let r = by_type(&t, 0, 100);
+        let buf = mindmap_groups(&r.groups, 800.0, 600.0, 1, 0, ColorMode::ByType).unwrap();
+        let root = buf.cells.iter().find(|c| c.depth == 0).unwrap();
+        assert!(
+            root.g[2] >= 13.0,
+            "root hub radius {} must clear the 13px label gate",
+            root.g[2]
+        );
+        assert!(
+            (root.g[2] - crate::layout::mindmap::ROOT_DOT_R).abs() < 0.01,
+            "root hub radius must equal ROOT_DOT_R (engine parity)"
+        );
     }
 
     #[test]

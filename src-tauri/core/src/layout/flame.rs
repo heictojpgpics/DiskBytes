@@ -7,17 +7,17 @@
 use crate::error::CoreError;
 use crate::layout::{
     check_geometry, effective_branch_root, node_color, pack_rgba, Cell, ColorMode, LayoutBuffer,
-    LayoutMeta, MAX_CELLS,
+    LayoutMeta,
 };
 use crate::scan::node::Tree;
 
 /// Minimum block width in px (spec: "Skip blocks under 1px wide").
-const MIN_W: f32 = 1.0;
+pub(crate) const MIN_W: f32 = 1.0;
 /// Horizontal gap between sibling blocks.
-const GAP_X: f32 = 0.5;
+pub(crate) const GAP_X: f32 = 0.5;
 /// Blocks narrower than this sit flush (no gap) — the fine texture of
 /// many small files renders solid instead of striped (picket-fence fix).
-const GAP_MIN_W: f32 = 3.0;
+pub(crate) const GAP_MIN_W: f32 = 3.0;
 
 /// Layout the subtree under `node` as a flame/icicle chart.
 ///
@@ -53,7 +53,7 @@ pub fn flame(
         cells.push(Cell::rect(
             node,
             0,
-            pack_rgba(0x8E8E93),
+            pack_rgba(crate::layout::ANCHOR_GRAY),
             0.0,
             0.0,
             width,
@@ -168,8 +168,7 @@ fn layout_row(
     };
     let mut cursor = x0;
     for (slot, &(id, w_raw)) in kept.iter().enumerate() {
-        if cells.len() >= MAX_CELLS {
-            *truncated = true;
+        if crate::layout::over_budget(cells, truncated) {
             return;
         }
         let c = tree.node(id).expect("kept child id");
@@ -179,7 +178,7 @@ fn layout_row(
         }
         // One pastel family per effective top-level branch, inherited by
         // every descendant (shade still varies by depth + sibling index).
-        let fam = if node == branch_root { slot } else { top_index };
+        let fam = crate::layout::family_of(node, branch_root, slot, top_index);
         let rgba = pack_rgba(match color {
             ColorMode::ByFolder => node_color(tree, id, color, now, fam, depth_here as u16, slot),
             ColorMode::ByType => c.category().color(),

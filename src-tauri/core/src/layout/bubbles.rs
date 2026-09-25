@@ -19,16 +19,16 @@
 use crate::error::CoreError;
 use crate::layout::{
     check_geometry, depth_below, effective_branch_root, node_color, Cell, ColorMode, LayoutBuffer,
-    LayoutMeta, MAX_CELLS,
+    LayoutMeta,
 };
 use crate::scan::node::Tree;
 
 /// Padding between a parent circle's content and its rim.
-const PAD: f32 = 3.0;
+pub(crate) const PAD: f32 = 3.0;
 /// Gap between sibling circles on a ring.
-const GAP: f32 = 2.0;
+pub(crate) const GAP: f32 = 2.0;
 /// Minimum radius to emit (sub-pixel bubbles skipped).
-const MIN_R: f32 = 1.0;
+pub(crate) const MIN_R: f32 = 1.0;
 /// Alpha for the primary tier — the root container, the single-child
 /// chain and the effective top-level branches: the reference's soft
 /// translucent fill so nested circles read through.
@@ -153,8 +153,7 @@ fn emit(
     branch_root: u32,
     branch_level: u32,
 ) {
-    if cells.len() >= MAX_CELLS {
-        *truncated = true;
+    if crate::layout::over_budget(cells, truncated) {
         return;
     }
     if drawn_r < MIN_R {
@@ -247,7 +246,7 @@ fn emit(
             now,
             cells,
             truncated,
-            if b.id == branch_root { i } else { top_index },
+            crate::layout::family_of(b.id, branch_root, i, top_index),
             branch_root,
             branch_level,
         );

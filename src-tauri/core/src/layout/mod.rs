@@ -263,6 +263,59 @@ pub fn pack_rgba(rgb: u32) -> u32 {
     (rgb << 8) | 0xFF
 }
 
+/// The neutral anchor/gray tone for root cells, hub dots and group
+/// headers (spelled as one constant — it was a magic literal at six
+/// sites across four engines).
+pub(crate) const ANCHOR_GRAY: u32 = 0x8E8E93;
+
+/// Cell-budget check shared by EVERY emit loop (hoisted from groups.rs
+/// where it lived private next to five hand-copied inline twins).
+#[must_use]
+pub(crate) fn over_budget(cells: &[Cell], truncated: &mut bool) -> bool {
+    if cells.len() >= MAX_CELLS {
+        *truncated = true;
+        return true;
+    }
+    false
+}
+
+/// By-folder family assignment (the effective-branch-root rule shared
+/// by all five engines): a node AT the branch root takes its sibling
+/// index as a new family; every deeper node inherits its parent's.
+#[must_use]
+pub(crate) fn family_of(
+    parent: u32,
+    branch_root: u32,
+    sibling_index: usize,
+    inherited: usize,
+) -> usize {
+    if parent == branch_root {
+        sibling_index
+    } else {
+        inherited
+    }
+}
+
+/// Live, sizeable children of `parent` (removed and zero-`on_disk`
+/// filtered) plus their total — the enumeration every engine starts
+/// its layout pass with (was five hand-rolled variants; treemap's also
+/// allocated three intermediate vecs per directory).
+#[must_use]
+pub(crate) fn sizeable_children(tree: &Tree, parent: u32) -> (Vec<u32>, u64) {
+    let children = tree.children_sorted(parent);
+    let mut ids = Vec::with_capacity(children.len());
+    let mut total = 0u64;
+    for &id in children {
+        if let Some(n) = tree.node(id) {
+            if !n.is_removed() && n.on_disk > 0 {
+                ids.push(id);
+                total = total.saturating_add(n.on_disk);
+            }
+        }
+    }
+    (ids, total)
+}
+
 /// Age bucket colors (spec §7 By age), bucket index 0..=5.
 #[must_use]
 pub const fn age_bucket_color(bucket: usize) -> u32 {

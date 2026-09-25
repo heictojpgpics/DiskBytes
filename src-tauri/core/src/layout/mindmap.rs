@@ -8,16 +8,16 @@
 use crate::error::CoreError;
 use crate::layout::{
     check_geometry, depth_below, effective_branch_root, node_color, pack_rgba, Cell, ColorMode,
-    LayoutBuffer, LayoutMeta, MAX_CELLS,
+    LayoutBuffer, LayoutMeta,
 };
 use crate::scan::node::Tree;
 
 /// Minimum dot radius.
-const MIN_R: f32 = 1.5;
+pub(crate) const MIN_R: f32 = 1.5;
 /// Base dot radius at the root's children (scales with viewport).
-const DOT_BASE: f32 = 26.0;
+pub(crate) const DOT_BASE: f32 = 26.0;
 /// Root hub dot radius (label-gate eligible: the JS names the root).
-const ROOT_DOT_R: f32 = 14.0;
+pub(crate) const ROOT_DOT_R: f32 = 14.0;
 /// Alpha for top-level dots — the root chain plus the effective
 /// top-level branches: solid, matching the reference's bold branch dots.
 const ALPHA_TOP: u32 = 0xFF;
@@ -64,7 +64,7 @@ pub fn mindmap(
     cells.push(Cell::dot(
         node,
         0,
-        pack_rgba(0x8E8E93),
+        pack_rgba(crate::layout::ANCHOR_GRAY),
         cx,
         cy,
         ROOT_DOT_R,
@@ -166,8 +166,7 @@ fn layout_branches(
     let level_r = ring_r - step_r * (depth_left as f32 - 1.0);
     let mut cursor = a0; // start at the sector's leading edge
     for (i, &id) in children.iter().enumerate() {
-        if cells.len() >= MAX_CELLS {
-            *truncated = true;
+        if crate::layout::over_budget(cells, truncated) {
             return;
         }
         let c = tree.node(id).expect("child id");
@@ -209,7 +208,7 @@ fn layout_branches(
         }
         // One pastel family per effective top-level branch, inherited by
         // every descendant (shade still varies by depth + sibling index).
-        let fam = if node == branch_root { i } else { top_index };
+        let fam = crate::layout::family_of(node, branch_root, i, top_index);
         let rgb = match color {
             ColorMode::ByFolder => node_color(tree, id, color, now, fam, depth_here as u16, i),
             ColorMode::ByType => c.category().color(),
